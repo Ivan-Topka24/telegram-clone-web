@@ -1,0 +1,281 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="dark">
+  <title>Telegram Web Clone</title>
+  <link rel="stylesheet" href="./css/main.css">
+</head>
+<body>
+  <!-- Auth Overlay -->
+  <section id="auth-overlay" class="auth-overlay" aria-labelledby="auth-heading">
+    <div class="auth-card">
+      <div class="auth-brand">
+        <div class="auth-logo" aria-hidden="true">TG</div>
+        <h1 id="auth-heading" class="auth-title">Telegram Web Clone</h1>
+      </div>
+
+      <div class="auth-tabs" role="tablist" aria-label="Authentication mode">
+        <button
+          id="auth-tab-login"
+          type="button"
+          role="tab"
+          aria-selected="true"
+          class="auth-tab active"
+          data-mode="login"
+        >
+          Sign In
+        </button>
+        <button
+          id="auth-tab-register"
+          type="button"
+          role="tab"
+          aria-selected="false"
+          class="auth-tab"
+          data-mode="register"
+        >
+          Register
+        </button>
+      </div>
+
+      <form id="auth-form" class="auth-form" novalidate>
+        <div class="form-field">
+          <label for="auth-username">Username</label>
+          <input
+            id="auth-username"
+            name="username"
+            type="text"
+            autocomplete="username"
+            autocorrect="off"
+            autocapitalize="none"
+            spellcheck="false"
+            enterkeyhint="next"
+            minlength="3"
+            maxlength="32"
+            placeholder="e.g. alice_dev"
+            required
+          >
+        </div>
+
+        <div id="auth-display-name-group" class="form-field" hidden>
+          <label for="auth-display-name">Display Name</label>
+          <input
+            id="auth-display-name"
+            name="displayName"
+            type="text"
+            autocomplete="name"
+            enterkeyhint="next"
+            maxlength="64"
+            placeholder="e.g. Alice"
+          >
+        </div>
+
+        <div class="form-field">
+          <label for="auth-password">Password</label>
+          <input
+            id="auth-password"
+            name="password"
+            type="password"
+            autocomplete="current-password"
+            enterkeyhint="done"
+            minlength="6"
+            placeholder="At least 6 characters"
+            required
+          >
+        </div>
+
+        <p id="auth-error" class="form-error" role="alert" aria-live="polite" hidden></p>
+
+        <button id="auth-submit-btn" type="submit" class="btn btn-primary btn-full">
+          Sign In
+        </button>
+      </form>
+    </div>
+  </section>
+
+  <!-- Main Two-Column App Shell -->
+  <div id="app-shell" class="app-shell" hidden>
+    <!-- Left Sidebar -->
+    <aside class="sidebar" aria-label="Chats and user search">
+      <header class="sidebar-header">
+        <div class="current-user">
+          <div id="current-user-avatar" class="avatar avatar-accent" aria-hidden="true">?</div>
+          <div class="current-user-meta">
+            <span id="current-user-name" class="current-user-name">User</span>
+            <span id="current-user-username" class="current-user-handle">@username</span>
+          </div>
+        </div>
+        <div class="sidebar-actions">
+          <button id="new-group-btn" type="button" class="btn btn-secondary btn-sm">
+            New Group
+          </button>
+          <button id="logout-btn" type="button" class="btn btn-ghost btn-sm" title="Sign out">
+            Logout
+          </button>
+        </div>
+      </header>
+
+      <search class="sidebar-search">
+        <div class="search-input-wrap">
+          <input
+            id="user-search-input"
+            type="search"
+            placeholder="Search users..."
+            aria-label="Search users by username"
+            autocomplete="off"
+            autocorrect="off"
+            autocapitalize="none"
+            spellcheck="false"
+            enterkeyhint="search"
+          >
+        </div>
+      </search>
+
+      <div id="search-results-panel" class="search-results-panel" hidden>
+        <div class="section-label">Global Search</div>
+        <ul id="search-results" class="search-results scroller"></ul>
+      </div>
+
+      <ul id="chat-list" class="chat-list scroller" aria-label="Conversations"></ul>
+    </aside>
+
+    <!-- Right Main Chat Area -->
+    <main class="chat-area">
+      <div id="empty-chat-state" class="empty-chat-state">
+        <div class="empty-chat-pill">
+          Select a chat or search for a user to start messaging
+        </div>
+      </div>
+
+      <section id="active-chat-container" class="active-chat-container" hidden>
+        <header class="chat-header">
+          <div class="chat-header-info">
+            <div id="chat-header-avatar" class="avatar" aria-hidden="true">?</div>
+            <div class="chat-header-text">
+              <h2 id="chat-header-title" class="chat-header-title">Chat</h2>
+              <div class="chat-header-status">
+                <span id="chat-header-subtitle" class="chat-header-subtitle"></span>
+                <span id="typing-indicator" class="typing-indicator" aria-live="polite" hidden></span>
+              </div>
+            </div>
+          </div>
+        </header>
+
+        <div id="message-list" class="message-list scroller" aria-live="polite"></div>
+
+        <form id="message-form" class="message-form" autocomplete="off">
+          <input
+            id="message-input"
+            name="text"
+            type="text"
+            class="message-input"
+            placeholder="Write a message..."
+            aria-label="Message text"
+            enterkeyhint="send"
+            required
+          >
+          <button id="send-message-btn" type="submit" class="btn btn-primary send-btn">
+            Send
+          </button>
+        </form>
+      </section>
+    </main>
+  </div>
+
+  <!-- Create Group Modal -->
+  <dialog id="group-modal" class="modal-dialog" aria-labelledby="group-modal-title" closedby="any">
+    <div class="modal-card">
+      <header class="modal-header">
+        <h2 id="group-modal-title" class="modal-title">Create Group Chat</h2>
+        <button id="group-close-btn" type="button" class="btn btn-ghost btn-sm" aria-label="Close modal">
+          &times;
+        </button>
+      </header>
+
+      <form id="group-modal-form" class="modal-form" novalidate>
+        <div class="form-field">
+          <label for="group-title-input">Group Name</label>
+          <input
+            id="group-title-input"
+            name="title"
+            type="text"
+            maxlength="100"
+            placeholder="e.g. Project Team"
+            enterkeyhint="next"
+            required
+          >
+        </div>
+
+        <div class="form-field">
+          <label for="group-member-search">Add Members</label>
+          <input
+            id="group-member-search"
+            type="search"
+            autocomplete="off"
+            autocorrect="off"
+            autocapitalize="none"
+            spellcheck="false"
+            enterkeyhint="search"
+            placeholder="Search by username..."
+          >
+        </div>
+
+        <div id="group-selected-members" class="selected-members-chips" aria-live="polite"></div>
+
+        <ul id="group-user-results" class="group-user-results scroller"></ul>
+
+        <p id="group-modal-error" class="form-error" role="alert" aria-live="polite" hidden></p>
+
+        <footer class="modal-footer">
+          <button id="group-cancel-btn" type="button" class="btn btn-secondary">
+            Cancel
+          </button>
+          <button id="group-submit-btn" type="submit" class="btn btn-primary">
+            Create Group
+          </button>
+        </footer>
+      </form>
+    </div>
+  </dialog>
+
+  <!-- HTML Templates -->
+  <template id="chat-item-template">
+    <li class="chat-item" data-chat-id="">
+      <div class="avatar chat-item-avatar" aria-hidden="true"></div>
+      <div class="chat-item-body">
+        <div class="chat-item-row">
+          <span class="chat-item-title"></span>
+          <time class="chat-item-time"></time>
+        </div>
+        <div class="chat-item-row">
+          <span class="chat-item-preview"></span>
+          <span class="badge chat-item-badge" hidden></span>
+        </div>
+      </div>
+    </li>
+  </template>
+
+  <template id="search-user-template">
+    <li class="search-user-item" data-user-id="">
+      <div class="avatar search-user-avatar" aria-hidden="true"></div>
+      <div class="search-user-info">
+        <span class="search-user-name"></span>
+        <span class="search-user-handle"></span>
+      </div>
+    </li>
+  </template>
+
+  <template id="message-item-template">
+    <div class="message-row">
+      <article class="message-bubble">
+        <div class="message-sender"></div>
+        <div class="message-text"></div>
+        <time class="message-time"></time>
+      </article>
+    </div>
+  </template>
+
+  <script type="module" src="./js/main.js"></script>
+</body>
+</html>
