@@ -17,11 +17,11 @@ export class Store {
   }
 
   /**
-   * Direct read-only view of current state properties.
-   * @returns {object}
+   * Read-only shallow snapshot of current state properties.
+   * @returns {Readonly<object>}
    */
   get state() {
-    return this._state;
+    return Object.freeze({ ...this._state });
   }
 
   /**
@@ -45,8 +45,9 @@ export class Store {
       return;
     }
 
+    const snapshot = this.state;
     for (const callback of callbacks) {
-      callback(value, this._state);
+      callback(value, snapshot);
     }
   }
 

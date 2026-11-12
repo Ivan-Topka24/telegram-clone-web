@@ -8,15 +8,40 @@ const TYPING_TIMEOUT_MS = 3000;
 export class SocketClient {
   /**
    * @param {import('./Store.js').Store} store
+   * @param {object} [options]
+   * @param {(errPayload: { code?: string, message?: string }) => void} [options.onError]
+   * @param {(message: object) => void} [options.onUnknownChatMessage]
+   * @param {() => void} [options.onUnauthorized]
+   * @param {EventTarget|null} [options.eventTarget]
    */
-  constructor(store) {
+  constructor(
+    store,
+    {
+      onError = null,
+      onUnknownChatMessage = null,
+      onUnauthorized = null,
+      eventTarget = typeof window !== 'undefined' ? window : null,
+    } = {}
+  ) {
     this.store = store;
+    this._onError = onError;
+    this._onUnknownChatMessage = onUnknownChatMessage;
+    this._onUnauthorized = onUnauthorized;
+    this._eventTarget = eventTarget;
     this._ws = null;
     this._token = null;
     this._manuallyClosed = false;
     this._reconnectDelay = INITIAL_RECONNECT_DELAY_MS;
     this._reconnectTimer = null;
     this._typingTimers = new Map();
+  }
+
+  /**
+   * Registers a callback for incoming message:new on chats not yet in store.chats.
+   * @param {(message: object) => void} handler
+   */
+  setUnknownChatHandler(handler) {
+    this._onUnknownChatMessage = handler;
   }
 
   /**
@@ -32,7 +57,10 @@ export class SocketClient {
     this._manuallyClosed = false;
     this._clearReconnectTimer();
 
-    if (this._ws && (this._ws.readyState === WebSocket.OPEN || this._ws.readyState === WebSocket.CONNECTING)) {
+    if (
+      this._ws &&
+      (this._ws.readyState === WebSocket.OPEN || this._ws.readyState === WebSocket.CONNECTING)
+    ) {
       this._ws.close();
     }
 
@@ -56,7 +84,11 @@ export class SocketClient {
 
       if (event.code === 4001) {
         this._manuallyClosed = true;
-        window.dispatchEvent(new CustomEvent('auth:unauthorized'));
+        if (this._onUnauthorized) {
+          this._onUnauthorized();
+        } else if (this._eventTarget && typeof CustomEvent !== 'undefined') {
+          this._eventTarget.dispatchEvent(new CustomEvent('auth:unauthorized'));
+        }
         return;
       }
 
@@ -101,7 +133,7 @@ export class SocketClient {
   }
 
   /**
-   * Routes incoming server WebSocket events into Store state updates.
+   * Routes incoming server WebSocket events into Store state updates or error notifications.
    * @param {string} rawData
    */
   _handleMessage(rawData) {
@@ -123,6 +155,27 @@ export class SocketClient {
       this._onChatCreated(payload);
     } else if (event === 'chat:typing') {
       this._onChatTyping(payload);
+    } else if (event === 'error') {
+      this._onServerError(payload);
+    }
+  }
+
+  /**
+   * Surfaces server-sent WebSocket error frames to listeners.
+   * @param {{ code?: string, message?: string }} payload
+   */
+  _onServerError(payload) {
+    const errorInfo = {
+      code: payload?.code || 'WS_ERROR',
+      message: payload?.message || 'WebSocket request failed.',
+    };
+
+    if (this._onError) {
+      this._onError(errorInfo);
+    }
+
+    if (this._eventTarget && typeof CustomEvent !== 'undefined') {
+      this._eventTarget.dispatchEvent(new CustomEvent('socket:error', { detail: errorInfo }));
     }
   }
 
@@ -151,6 +204,8 @@ export class SocketClient {
       chats.splice(existingIndex, 1);
       chats.unshift(updatedChat);
       this.store.setState('chats', chats);
+    } else if (this._onUnknownChatMessage) {
+      this._onUnknownChatMessage(message);
     }
 
     if (message.chatId === this.store.state.activeChatId) {

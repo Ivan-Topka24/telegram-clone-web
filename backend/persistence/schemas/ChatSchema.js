@@ -51,6 +51,10 @@ const chatSchema = new mongoose.Schema(
       default: null,
       trim: true,
     },
+    directKey: {
+      type: String,
+      default: undefined,
+    },
     members: {
       type: [chatMemberSchema],
       default: [],
@@ -70,5 +74,12 @@ const chatSchema = new mongoose.Schema(
 );
 
 chatSchema.index({ 'members.userId': 1, updatedAt: -1 });
+chatSchema.index(
+  { directKey: 1 },
+  {
+    unique: true,
+    partialFilterExpression: { directKey: { $type: 'string' } },
+  }
+);
 
 module.exports = mongoose.models.Chat || mongoose.model('Chat', chatSchema);

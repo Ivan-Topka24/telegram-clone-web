@@ -1,3 +1,4 @@
+const { AsyncLocalStorage } = require('async_hooks');
 const mongoose = require('mongoose');
 const IUnitOfWork = require('../domain/interfaces/IUnitOfWork');
 
@@ -20,32 +21,51 @@ function isTransactionUnsupportedError(err) {
 }
 
 /**
- * Mongoose-backed Unit of Work managing multi-document transactions.
+ * Mongoose-backed Unit of Work managing multi-document transactions via AsyncLocalStorage.
  */
 class UnitOfWork extends IUnitOfWork {
   /**
    * @param {object} [options]
    * @param {{ warn: Function }} [options.logger]
+   * @param {typeof mongoose} [options.mongooseInstance]
    */
-  constructor({ logger = null } = {}) {
+  constructor({ logger = null, mongooseInstance = mongoose } = {}) {
     super();
     this.logger = logger;
+    this.mongoose = mongooseInstance;
+    this._sessionStorage = new AsyncLocalStorage();
+    /** @type {boolean|null} Cached replica-set transaction support state */
+    this._transactionsSupported = null;
   }
 
   /**
-   * Executes workCallback inside a MongoDB transaction.
-   * Falls back to non-transactional execution when running against a standalone local MongoDB.
-   * @param {(session: import('mongoose').ClientSession|null) => Promise<any>} workCallback
+   * Returns the active Mongoose ClientSession for the current async execution scope, if any.
+   * @returns {import('mongoose').ClientSession|null}
+   */
+  getSession() {
+    return this._sessionStorage.getStore() ?? null;
+  }
+
+  /**
+   * Executes workCallback inside an ambient MongoDB transaction scope.
+   * Falls back to non-transactional execution when running against a standalone MongoDB
+   * and caches that capability so subsequent calls avoid failed session round-trips.
+   * @param {() => Promise<any>} workCallback
    * @returns {Promise<any>}
    */
   async execute(workCallback) {
-    const session = await mongoose.startSession();
+    if (this._transactionsSupported === false) {
+      return this._sessionStorage.run(null, workCallback);
+    }
+
+    const session = await this.mongoose.startSession();
     let fallbackRequired = false;
 
     try {
       session.startTransaction();
-      const result = await workCallback(session);
+      const result = await this._sessionStorage.run(session, workCallback);
       await session.commitTransaction();
+      this._transactionsSupported = true;
       return result;
     } catch (err) {
       if (session.inTransaction()) {
@@ -53,6 +73,7 @@ class UnitOfWork extends IUnitOfWork {
       }
 
       if (isTransactionUnsupportedError(err)) {
+        this._transactionsSupported = false;
         fallbackRequired = true;
       } else {
         throw err;
@@ -63,9 +84,11 @@ class UnitOfWork extends IUnitOfWork {
 
     if (fallbackRequired) {
       if (this.logger && typeof this.logger.warn === 'function') {
-        this.logger.warn('MongoDB transactions unavailable (standalone instance); executing without transaction session');
+        this.logger.warn(
+          'MongoDB transactions unavailable (standalone instance); executing without transaction session'
+        );
       }
-      return workCallback(null);
+      return this._sessionStorage.run(null, workCallback);
     }
   }
 }

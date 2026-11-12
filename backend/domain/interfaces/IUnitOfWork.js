@@ -1,10 +1,10 @@
 /**
- * Contract for managing atomic multi-document database transactions.
+ * Contract for managing atomic multi-document database transactions via ambient scope.
  */
 class IUnitOfWork {
   /**
    * Executes the provided asynchronous callback inside a transaction boundary.
-   * @param {(session: any) => Promise<any>} work
+   * @param {() => Promise<any>} work
    * @returns {Promise<any>}
    */
   async execute(work) {

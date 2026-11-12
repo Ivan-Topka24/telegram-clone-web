@@ -1,4 +1,4 @@
-const env = require('./config/env');
+const defaultConfig = require('./config/env');
 
 // Infrastructure
 const Logger = require('./infrastructure/logging/Logger');
@@ -14,15 +14,18 @@ const UserRepository = require('./persistence/repositories/UserRepository');
 const ChatRepository = require('./persistence/repositories/ChatRepository');
 const MessageRepository = require('./persistence/repositories/MessageRepository');
 
-// Application Services
+// Application Mappers & Services
+const ChatDtoMapper = require('./application/mappers/ChatDtoMapper');
 const AuthService = require('./application/services/AuthService');
 const UserService = require('./application/services/UserService');
 const ChatService = require('./application/services/ChatService');
 const MessageService = require('./application/services/MessageService');
+const PresenceService = require('./application/services/PresenceService');
 
 // Presentation (HTTP & WebSockets)
 const createAuthMiddleware = require('./presentation/http/middlewares/authMiddleware');
 const createGlobalExceptionMiddleware = require('./presentation/http/middlewares/globalExceptionMiddleware');
+const createRateLimitMiddleware = require('./presentation/http/middlewares/rateLimitMiddleware');
 const AuthController = require('./presentation/http/controllers/AuthController');
 const UserController = require('./presentation/http/controllers/UserController');
 const ChatController = require('./presentation/http/controllers/ChatController');
@@ -31,9 +34,13 @@ const createApp = require('./presentation/http/app');
 const WsGatewayController = require('./presentation/ws/WsGatewayController');
 
 /**
- * Composition Root: instantiates and wires all application dependencies.
+ * Composition Root: instantiates and wires all application dependencies without import-time side effects.
+ * @param {Partial<typeof defaultConfig>} [configOverrides={}]
+ * @returns {object}
  */
-function createContainer() {
+function createContainer(configOverrides = {}) {
+  const env = { ...defaultConfig, ...configOverrides };
+
   // Infrastructure
   const logger = new Logger();
   const passwordHasher = new PasswordHasher();
@@ -50,11 +57,12 @@ function createContainer() {
     logger,
   });
   const unitOfWork = new UnitOfWork({ logger });
-  const userRepository = new UserRepository();
-  const chatRepository = new ChatRepository();
-  const messageRepository = new MessageRepository();
+  const userRepository = new UserRepository({ unitOfWork });
+  const chatRepository = new ChatRepository({ unitOfWork });
+  const messageRepository = new MessageRepository({ unitOfWork });
 
-  // Application Services
+  // Application Mappers & Services
+  const chatDtoMapper = new ChatDtoMapper();
   const authService = new AuthService({
     userRepository,
     passwordHasher,
@@ -67,6 +75,8 @@ function createContainer() {
     chatRepository,
     userRepository,
     realtimeNotifier,
+    chatDtoMapper,
+    logger,
   });
   const messageService = new MessageService({
     unitOfWork,
@@ -74,11 +84,20 @@ function createContainer() {
     messageRepository,
     userRepository,
     realtimeNotifier,
+    logger,
+  });
+  const presenceService = new PresenceService({
+    chatRepository,
+    realtimeNotifier,
   });
 
   // Presentation - HTTP
   const authMiddleware = createAuthMiddleware(jwtProvider);
   const globalExceptionMiddleware = createGlobalExceptionMiddleware(logger);
+  const authRateLimiter = createRateLimitMiddleware({
+    windowMs: 60_000,
+    maxRequests: env.NODE_ENV === 'test' ? 200 : 30,
+  });
   const authController = new AuthController({ authService });
   const userController = new UserController({ userService });
   const chatController = new ChatController({ chatService, messageService });
@@ -87,10 +106,12 @@ function createContainer() {
     userController,
     chatController,
     authMiddleware,
+    authRateLimiter,
   });
   const app = createApp({
     apiRouter,
     globalExceptionMiddleware,
+    corsOrigin: env.CORS_ORIGIN || null,
   });
 
   // Presentation - WebSockets
@@ -98,8 +119,7 @@ function createContainer() {
     jwtProvider,
     connectionManager,
     messageService,
-    chatRepository,
-    realtimeNotifier,
+    presenceService,
     logger,
   });
 
@@ -115,12 +135,15 @@ function createContainer() {
     userRepository,
     chatRepository,
     messageRepository,
+    chatDtoMapper,
     authService,
     userService,
     chatService,
     messageService,
+    presenceService,
     authMiddleware,
     globalExceptionMiddleware,
+    authRateLimiter,
     authController,
     userController,
     chatController,
@@ -130,7 +153,4 @@ function createContainer() {
   };
 }
 
-const container = createContainer();
-container.createContainer = createContainer;
-
-module.exports = container;
+module.exports = { createContainer };

@@ -39,10 +39,14 @@ class ChatController {
   }
 
   /**
-   * GET /api/chats/:chatId/messages
+   * GET /api/chats/:chatId/messages?limit=&before=
    */
   async getMessages(req, res) {
-    const messages = await this.messageService.getChatHistory(req.user.id, req.params.chatId);
+    const { limit, before } = req.query || {};
+    const messages = await this.messageService.getChatHistory(req.user.id, req.params.chatId, {
+      limit,
+      before,
+    });
     res.status(200).json({ success: true, data: messages });
   }
 }

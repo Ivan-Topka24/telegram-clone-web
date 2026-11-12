@@ -1,40 +1,90 @@
 const WebSocket = require('ws');
 const { DomainException } = require('../../domain/exceptions');
 
+const DEFAULT_MAX_PAYLOAD_BYTES = 64 * 1024;
+const DEFAULT_HEARTBEAT_INTERVAL_MS = 30_000;
+
 /**
- * Manages WebSocket authentication, connection lifecycle, and incoming real-time events.
+ * Checks whether a value is a non-null plain object (not an Array).
+ * @param {unknown} value
+ * @returns {boolean}
+ */
+function isPlainObject(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+/**
+ * Manages WebSocket authentication, connection lifecycle, heartbeat pruning, and event dispatch.
  */
 class WsGatewayController {
   /**
    * @param {object} deps
    * @param {import('http').Server} [deps.server]
    * @param {{ verifyToken: Function }} deps.jwtProvider
-   * @param {import('../../infrastructure/realtime/ConnectionManager')} deps.connectionManager
+   * @param {import('../../domain/interfaces/IConnectionManager')} deps.connectionManager
    * @param {import('../../application/services/MessageService')} deps.messageService
-   * @param {import('../../domain/interfaces/IChatRepository')} deps.chatRepository
-   * @param {import('../../domain/interfaces/IRealtimeNotifier')} deps.realtimeNotifier
+   * @param {import('../../application/services/PresenceService')} deps.presenceService
    * @param {{ info: Function, warn: Function, error: Function }} deps.logger
+   * @param {number} [deps.maxPayloadBytes=65536]
+   * @param {number} [deps.heartbeatIntervalMs=30000]
    */
   constructor({
     server = null,
     jwtProvider,
     connectionManager,
     messageService,
-    chatRepository,
-    realtimeNotifier,
+    presenceService,
     logger,
+    maxPayloadBytes = DEFAULT_MAX_PAYLOAD_BYTES,
+    heartbeatIntervalMs = DEFAULT_HEARTBEAT_INTERVAL_MS,
   }) {
     this.jwtProvider = jwtProvider;
     this.connectionManager = connectionManager;
     this.messageService = messageService;
-    this.chatRepository = chatRepository;
-    this.realtimeNotifier = realtimeNotifier;
+    this.presenceService = presenceService;
     this.logger = logger;
+    this.maxPayloadBytes = maxPayloadBytes;
+    this.heartbeatIntervalMs = heartbeatIntervalMs;
     this.wss = null;
+    this._heartbeatTimer = null;
+
+    /** @type {Map<string, (user: { userId: string, username: string }, payload: object) => Promise<void>|void>} */
+    this._eventHandlers = new Map();
+    this._registerDefaultHandlers();
 
     if (server) {
       this.initialize(server);
     }
+  }
+
+  /**
+   * Registers default WebSocket client-to-server event handlers.
+   */
+  _registerDefaultHandlers() {
+    this.registerHandler('message:send', async (user, payload) => {
+      await this.messageService.sendMessage({
+        senderId: user.userId,
+        chatId: payload.chatId,
+        text: payload.text,
+      });
+    });
+
+    this.registerHandler('chat:typing', async (user, payload) => {
+      await this.presenceService.notifyTyping({
+        userId: user.userId,
+        username: user.username,
+        chatId: payload.chatId,
+      });
+    });
+  }
+
+  /**
+   * Registers or replaces a handler for a specific WebSocket event name (OCP).
+   * @param {string} eventName
+   * @param {(user: { userId: string, username: string }, payload: object) => Promise<void>|void} handler
+   */
+  registerHandler(eventName, handler) {
+    this._eventHandlers.set(eventName, handler);
   }
 
   /**
@@ -46,11 +96,45 @@ class WsGatewayController {
       return;
     }
 
-    this.wss = new WebSocket.Server({ server, path: '/ws' });
+    this.wss = new WebSocket.Server({
+      server,
+      path: '/ws',
+      maxPayload: this.maxPayloadBytes,
+    });
+
     this.wss.on('connection', (ws, req) => this._handleConnection(ws, req));
     this.wss.on('error', (err) => {
       this.logger.error('WebSocket server error', err);
     });
+
+    this._startHeartbeat();
+  }
+
+  /**
+   * Starts periodic ping/pong checks to terminate dead TCP connections.
+   */
+  _startHeartbeat() {
+    if (this._heartbeatTimer || this.heartbeatIntervalMs <= 0) {
+      return;
+    }
+
+    this._heartbeatTimer = setInterval(() => {
+      if (!this.wss) {
+        return;
+      }
+      for (const client of this.wss.clients) {
+        if (client.isAlive === false) {
+          client.terminate();
+          continue;
+        }
+        client.isAlive = false;
+        client.ping();
+      }
+    }, this.heartbeatIntervalMs);
+
+    if (typeof this._heartbeatTimer.unref === 'function') {
+      this._heartbeatTimer.unref();
+    }
   }
 
   /**
@@ -64,6 +148,11 @@ class WsGatewayController {
       const requestUrl = new URL(req.url || '/', 'http://localhost');
       const token = requestUrl.searchParams.get('token');
       const decoded = this.jwtProvider.verifyToken(token);
+
+      if (!decoded || !decoded.userId) {
+        throw new Error('Token missing userId claim');
+      }
+
       user = {
         userId: String(decoded.userId),
         username: decoded.username,
@@ -72,6 +161,11 @@ class WsGatewayController {
       ws.close(4001, 'Unauthorized');
       return;
     }
+
+    ws.isAlive = true;
+    ws.on('pong', () => {
+      ws.isAlive = true;
+    });
 
     this.connectionManager.addConnection(user.userId, ws);
     this.logger.info('WebSocket connected', { userId: user.userId, username: user.username });
@@ -94,7 +188,7 @@ class WsGatewayController {
   }
 
   /**
-   * Parses and dispatches an incoming WebSocket JSON frame.
+   * Parses, validates, and dispatches an incoming WebSocket JSON frame.
    * @param {import('ws')} ws
    * @param {{ userId: string, username: string }} user
    * @param {import('ws').RawData} rawData
@@ -108,42 +202,29 @@ class WsGatewayController {
       return;
     }
 
-    const { event, payload = {} } = parsed || {};
-
-    if (event === 'message:send') {
-      await this.messageService.sendMessage({
-        senderId: user.userId,
-        chatId: payload.chatId,
-        text: payload.text,
-      });
+    if (!isPlainObject(parsed) || typeof parsed.event !== 'string' || !parsed.event) {
+      this._sendErrorFrame(ws, 'INVALID_PAYLOAD', 'WebSocket frame must include a string event');
       return;
     }
 
-    if (event === 'chat:typing') {
-      if (!payload.chatId) {
-        return;
-      }
-
-      const chat = await this.chatRepository.findById(payload.chatId);
-      if (!chat || !chat.hasMember(user.userId)) {
-        return;
-      }
-
-      const recipientIds = chat.members
-        .map((member) => String(member.userId))
-        .filter((memberId) => memberId !== user.userId);
-
-      if (recipientIds.length > 0) {
-        this.realtimeNotifier.notifyUsers(recipientIds, 'chat:typing', {
-          chatId: chat.id,
-          userId: user.userId,
-          username: user.username,
-        });
-      }
+    if (parsed.payload !== undefined && !isPlainObject(parsed.payload)) {
+      this._sendErrorFrame(ws, 'INVALID_PAYLOAD', 'WebSocket payload must be a JSON object');
       return;
     }
 
-    this._sendErrorFrame(ws, 'UNKNOWN_EVENT', `Unsupported WebSocket event: ${String(event)}`);
+    const payload = parsed.payload || {};
+    const handler = this._eventHandlers.get(parsed.event);
+
+    if (!handler) {
+      this._sendErrorFrame(
+        ws,
+        'UNKNOWN_EVENT',
+        `Unsupported WebSocket event: ${String(parsed.event)}`
+      );
+      return;
+    }
+
+    await handler(user, payload);
   }
 
   /**
@@ -174,15 +255,36 @@ class WsGatewayController {
   }
 
   /**
-   * Closes the WebSocket server during graceful shutdown.
+   * Stops heartbeat timer, closes active client sockets, and closes the WebSocket server.
    * @returns {Promise<void>}
    */
   close() {
+    if (this._heartbeatTimer) {
+      clearInterval(this._heartbeatTimer);
+      this._heartbeatTimer = null;
+    }
+
     if (!this.wss) {
       return Promise.resolve();
     }
+
+    const wss = this.wss;
+    this.wss = null;
+
+    for (const client of wss.clients) {
+      try {
+        if (client.readyState === WebSocket.OPEN) {
+          client.close(1001, 'Server shutting down');
+        } else {
+          client.terminate();
+        }
+      } catch (_err) {
+        // Ignore individual socket shutdown errors.
+      }
+    }
+
     return new Promise((resolve) => {
-      this.wss.close(() => resolve());
+      wss.close(() => resolve());
     });
   }
 }

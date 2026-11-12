@@ -1,7 +1,7 @@
-import { getInitials } from '../core/formatters.js';
-
-const SEARCH_DEBOUNCE_MS = 300;
-const MIN_SEARCH_CHARS = 2;
+import {
+  UserSearchController,
+  renderUserSearchList,
+} from '../core/UserSearchController.js';
 
 /**
  * Manages the Create Group modal dialog, member multi-selection, and group creation.
@@ -16,8 +16,6 @@ export class GroupModalView {
     this.store = store;
     this.httpClient = httpClient;
     this._selectedMembers = new Map();
-    this._searchDebounceTimer = null;
-    this._latestSearchToken = 0;
 
     this.openBtnEl = document.getElementById('new-group-btn');
     this.modalEl = document.getElementById('group-modal');
@@ -31,6 +29,13 @@ export class GroupModalView {
     this.errorEl = document.getElementById('group-modal-error');
     this.submitBtnEl = document.getElementById('group-submit-btn');
     this.searchUserTemplate = document.getElementById('search-user-template');
+
+    this._searchController = new UserSearchController({
+      httpClient,
+      onResults: (users) => this._renderSearchResults(users),
+      onClear: () => this.userResultsEl.replaceChildren(),
+      onError: () => this.userResultsEl.replaceChildren(),
+    });
 
     this._bindEvents();
   }
@@ -67,7 +72,9 @@ export class GroupModalView {
       });
     }
 
-    this.memberSearchEl.addEventListener('input', () => this._handleMemberSearchInput());
+    this.memberSearchEl.addEventListener('input', () => {
+      this._searchController.handleInput(this.memberSearchEl.value);
+    });
     this.formEl.addEventListener('submit', (event) => this._handleSubmit(event));
   }
 
@@ -90,11 +97,7 @@ export class GroupModalView {
   }
 
   _resetState() {
-    if (this._searchDebounceTimer) {
-      clearTimeout(this._searchDebounceTimer);
-      this._searchDebounceTimer = null;
-    }
-    this._latestSearchToken += 1;
+    this._searchController.cancel();
     this._selectedMembers.clear();
     this.formEl.reset();
     this.selectedMembersEl.replaceChildren();
@@ -112,68 +115,15 @@ export class GroupModalView {
     this.errorEl.hidden = true;
   }
 
-  _handleMemberSearchInput() {
-    if (this._searchDebounceTimer) {
-      clearTimeout(this._searchDebounceTimer);
-    }
-
-    const query = this.memberSearchEl.value.trim();
-    if (query.length < MIN_SEARCH_CHARS) {
-      this._latestSearchToken += 1;
-      this.userResultsEl.replaceChildren();
-      return;
-    }
-
-    this._searchDebounceTimer = setTimeout(() => {
-      this._searchUsers(query);
-    }, SEARCH_DEBOUNCE_MS);
-  }
-
-  async _searchUsers(query) {
-    const requestToken = ++this._latestSearchToken;
-
-    try {
-      const users = await this.httpClient.get(`/users/search?q=${encodeURIComponent(query)}`);
-      if (requestToken !== this._latestSearchToken) {
-        return;
-      }
-      this._renderSearchResults(Array.isArray(users) ? users : []);
-    } catch (_err) {
-      if (requestToken === this._latestSearchToken) {
-        this.userResultsEl.replaceChildren();
-      }
-    }
-  }
-
   _renderSearchResults(users) {
-    this.userResultsEl.replaceChildren();
     const available = users.filter((u) => !this._selectedMembers.has(u.id));
-
-    if (available.length === 0) {
-      const emptyEl = document.createElement('li');
-      emptyEl.className = 'sidebar-empty';
-      emptyEl.textContent = 'No matching users available';
-      this.userResultsEl.appendChild(emptyEl);
-      return;
-    }
-
-    const fragment = document.createDocumentFragment();
-    for (const user of available) {
-      const clone = this.searchUserTemplate.content.cloneNode(true);
-      const itemEl = clone.querySelector('.search-user-item');
-      itemEl.dataset.userId = user.id;
-      clone.querySelector('.search-user-avatar').textContent = getInitials(user.displayName);
-      clone.querySelector('.search-user-name').textContent = user.displayName;
-      clone.querySelector('.search-user-handle').textContent = `@${user.username}`;
-
-      itemEl.addEventListener('click', () => {
-        this._addMember(user);
-      });
-
-      fragment.appendChild(clone);
-    }
-
-    this.userResultsEl.appendChild(fragment);
+    renderUserSearchList({
+      containerEl: this.userResultsEl,
+      templateEl: this.searchUserTemplate,
+      users: available,
+      emptyText: 'No matching users available',
+      onSelect: (user) => this._addMember(user),
+    });
   }
 
   _addMember(user) {

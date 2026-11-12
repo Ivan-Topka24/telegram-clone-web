@@ -1,8 +1,11 @@
+const IConnectionManager = require('../../domain/interfaces/IConnectionManager');
+
 /**
  * Tracks active WebSocket connections per userId to support multiple concurrent tabs/sessions.
  */
-class ConnectionManager {
+class ConnectionManager extends IConnectionManager {
   constructor() {
+    super();
     /** @type {Map<string, Set<import('ws')>>} */
     this.connections = new Map();
   }

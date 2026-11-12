@@ -1,4 +1,6 @@
 const MIN_SEARCH_QUERY_LENGTH = 2;
+const DEFAULT_SEARCH_LIMIT = 10;
+const MAX_SEARCH_LIMIT = 50;
 
 /**
  * Handles user directory lookup and search use cases.
@@ -17,9 +19,10 @@ class UserService {
    * Returns an empty list if the query is shorter than 2 characters.
    * @param {string} query
    * @param {string} currentUserId
+   * @param {number} [limit=10]
    * @returns {Promise<Array<object>>}
    */
-  async searchUsers(query, currentUserId) {
+  async searchUsers(query, currentUserId, limit = DEFAULT_SEARCH_LIMIT) {
     if (typeof query !== 'string') {
       return [];
     }
@@ -29,7 +32,17 @@ class UserService {
       return [];
     }
 
-    const users = await this.userRepository.searchByUsernamePrefix(trimmedQuery, currentUserId);
+    const numericLimit = Number(limit);
+    const safeLimit =
+      Number.isFinite(numericLimit) && numericLimit > 0
+        ? Math.min(Math.floor(numericLimit), MAX_SEARCH_LIMIT)
+        : DEFAULT_SEARCH_LIMIT;
+
+    const users = await this.userRepository.searchByUsernamePrefix(
+      trimmedQuery,
+      currentUserId,
+      safeLimit
+    );
     return users.map((user) => user.toPublicProfile());
   }
 }

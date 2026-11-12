@@ -1,11 +1,12 @@
 const request = require('supertest');
-const container = require('../../backend/container');
+const { createContainer } = require('../../backend/container');
 const testDb = require('../setup/testDb');
 
 describe('Integration — /api/users/search', () => {
-  const { app } = container;
+  let app;
 
   beforeAll(async () => {
+    ({ app } = createContainer());
     await testDb.connect();
   });
 
@@ -46,7 +47,6 @@ describe('Integration — /api/users/search', () => {
     expect(searchRes.body.data[0].username).toBe('ivan_test');
     expect(searchRes.body.data[0].passwordHash).toBeUndefined();
 
-    // Queries shorter than 2 chars return empty array
     const shortRes = await request(app)
       .get('/api/users/search?q=i')
       .set('Authorization', `Bearer ${token}`);

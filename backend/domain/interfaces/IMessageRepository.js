@@ -3,12 +3,11 @@
  */
 class IMessageRepository {
   /**
-   * Persists a new message record, optionally inside an active transaction session.
+   * Persists a new message record.
    * @param {object} data
-   * @param {any} [session=null]
    * @returns {Promise<import('../models/Message')>}
    */
-  async create(data, session = null) {
+  async create(data) {
     throw new Error('Not implemented');
   }
 

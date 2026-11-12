@@ -16,6 +16,7 @@ describe('Application Layer — ChatService', () => {
   beforeEach(() => {
     chatRepository = {
       findDirectChat: jest.fn(),
+      findOrCreateDirectChat: jest.fn(),
       create: jest.fn(),
       findUserChats: jest.fn(),
     };
@@ -35,21 +36,27 @@ describe('Application Layer — ChatService', () => {
     );
   });
 
-  test('getOrCreateDirectChat() returns existing direct chat without creating a duplicate', async () => {
+  test('getOrCreateDirectChat() returns existing direct chat without notifying as newly created', async () => {
     const existingChat = new Chat({
       id: 'c1',
       type: 'direct',
       members: [{ userId: 'u1', role: 'member' }, { userId: 'u2', role: 'member' }],
     });
 
-    userRepository.findById.mockResolvedValue(userB);
-    chatRepository.findDirectChat.mockResolvedValue(existingChat);
+    userRepository.findById.mockImplementation(async (id) => {
+      if (id === 'u2') return userB;
+      if (id === 'u1') return userA;
+      return null;
+    });
+    chatRepository.findOrCreateDirectChat.mockResolvedValue({
+      chat: existingChat,
+      created: false,
+    });
 
     const dto = await chatService.getOrCreateDirectChat('u1', 'u2');
 
     expect(dto.id).toBe('c1');
     expect(dto.displayTitle).toBe('Bob');
-    expect(chatRepository.create).not.toHaveBeenCalled();
     expect(realtimeNotifier.notifyUsers).not.toHaveBeenCalled();
   });
 
@@ -59,18 +66,18 @@ describe('Application Layer — ChatService', () => {
       if (id === 'u1') return userA;
       return null;
     });
-    chatRepository.findDirectChat.mockResolvedValue(null);
-    chatRepository.create.mockResolvedValue(
-      new Chat({
+    chatRepository.findOrCreateDirectChat.mockResolvedValue({
+      chat: new Chat({
         id: 'c2',
         type: 'direct',
         members: [{ userId: 'u1', role: 'member' }, { userId: 'u2', role: 'member' }],
-      })
-    );
+      }),
+      created: true,
+    });
 
     const dto = await chatService.getOrCreateDirectChat('u1', 'u2');
 
-    expect(chatRepository.create).toHaveBeenCalledTimes(1);
+    expect(chatRepository.findOrCreateDirectChat).toHaveBeenCalledWith('u1', 'u2');
     expect(dto.displayTitle).toBe('Bob');
     expect(realtimeNotifier.notifyUsers).toHaveBeenCalledWith(
       ['u2'],

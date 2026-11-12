@@ -18,6 +18,8 @@ export class ChatView {
     this.socketClient = socketClient;
     this._lastTypingSentAt = 0;
     this._activeLoadToken = 0;
+    this._renderedChatId = null;
+    this._renderedMessageIds = [];
 
     this.emptyStateEl = document.getElementById('empty-chat-state');
     this.activeContainerEl = document.getElementById('active-chat-container');
@@ -26,6 +28,7 @@ export class ChatView {
     this.headerSubtitleEl = document.getElementById('chat-header-subtitle');
     this.typingIndicatorEl = document.getElementById('typing-indicator');
     this.messageListEl = document.getElementById('message-list');
+    this.errorEl = document.getElementById('chat-error');
     this.messageFormEl = document.getElementById('message-form');
     this.messageInputEl = document.getElementById('message-input');
     this.messageTemplate = document.getElementById('message-item-template');
@@ -37,6 +40,10 @@ export class ChatView {
   _bindEvents() {
     this.messageFormEl.addEventListener('submit', (event) => this._handleSendMessage(event));
     this.messageInputEl.addEventListener('input', () => this._handleTyping());
+    window.addEventListener('socket:error', (event) => {
+      const message = event?.detail?.message || 'Failed to send message.';
+      this._showError(message);
+    });
   }
 
   _bindSubscriptions() {
@@ -46,14 +53,33 @@ export class ChatView {
     this.store.subscribe('chats', () => this._renderHeader());
   }
 
+  _showError(message) {
+    if (!this.errorEl) {
+      return;
+    }
+    this.errorEl.textContent = message;
+    this.errorEl.hidden = false;
+  }
+
+  _clearError() {
+    if (!this.errorEl) {
+      return;
+    }
+    this.errorEl.textContent = '';
+    this.errorEl.hidden = true;
+  }
+
   /**
    * Loads chat history and reveals the active conversation panel when activeChatId changes.
    * @param {string|null} chatId
    */
   async _onActiveChatChanged(chatId) {
     this._lastTypingSentAt = 0;
+    this._clearError();
 
     if (!chatId) {
+      this._renderedChatId = null;
+      this._renderedMessageIds = [];
       this.activeContainerEl.hidden = true;
       this.emptyStateEl.hidden = false;
       this.store.setState('messages', []);
@@ -64,6 +90,8 @@ export class ChatView {
     this.activeContainerEl.hidden = false;
     this._renderHeader();
     this._renderTypingIndicator();
+    this._renderedChatId = chatId;
+    this._renderedMessageIds = [];
     this.store.setState('messages', []);
 
     const loadToken = ++this._activeLoadToken;
@@ -75,9 +103,10 @@ export class ChatView {
       }
       this.store.setState('messages', Array.isArray(messages) ? messages : []);
       this.messageInputEl.focus();
-    } catch (_err) {
+    } catch (err) {
       if (loadToken === this._activeLoadToken) {
         this.store.setState('messages', []);
+        this._showError(err?.message || 'Failed to load message history.');
       }
     }
   }
@@ -139,32 +168,59 @@ export class ChatView {
   }
 
   /**
-   * Renders all messages in the active chat using #message-item-template and scrolls to bottom.
+   * Creates a DOM node for a single message using #message-item-template.
+   * @param {object} msg
+   * @param {string|undefined} currentUserId
+   * @returns {DocumentFragment}
+   */
+  _buildMessageNode(msg, currentUserId) {
+    const clone = this.messageTemplate.content.cloneNode(true);
+    const rowEl = clone.querySelector('.message-row');
+    const isOwn = Boolean(currentUserId && msg.senderId === currentUserId);
+    rowEl.classList.add(isOwn ? 'own' : 'incoming');
+    rowEl.dataset.messageId = msg.id || '';
+
+    clone.querySelector('.message-sender').textContent = msg.senderName || 'User';
+    clone.querySelector('.message-text').textContent = msg.text;
+    clone.querySelector('.message-time').textContent = formatTime(msg.createdAt);
+
+    return clone;
+  }
+
+  /**
+   * Incrementally appends new messages or performs full render when chat/list changes.
    * @param {Array<object>} messages
    */
   _renderMessages(messages) {
     const currentUserId = this.store.state.currentUser?.id;
-    this.messageListEl.replaceChildren();
+    const activeChatId = this.store.state.activeChatId;
 
     if (!Array.isArray(messages) || messages.length === 0) {
+      this.messageListEl.replaceChildren();
+      this._renderedMessageIds = [];
       return;
     }
 
-    const fragment = document.createDocumentFragment();
+    const canAppendIncrementally =
+      this._renderedChatId === activeChatId &&
+      this._renderedMessageIds.length > 0 &&
+      messages.length > this._renderedMessageIds.length &&
+      this._renderedMessageIds.every((id, idx) => messages[idx]?.id === id);
 
-    for (const msg of messages) {
-      const clone = this.messageTemplate.content.cloneNode(true);
-      const rowEl = clone.querySelector('.message-row');
-      const isOwn = Boolean(currentUserId && msg.senderId === currentUserId);
-      rowEl.classList.add(isOwn ? 'own' : 'incoming');
-
-      clone.querySelector('.message-sender').textContent = msg.senderName || 'User';
-      clone.querySelector('.message-text').textContent = msg.text;
-      clone.querySelector('.message-time').textContent = formatTime(msg.createdAt);
-
-      fragment.appendChild(clone);
+    const startIndex = canAppendIncrementally ? this._renderedMessageIds.length : 0;
+    if (!canAppendIncrementally) {
+      this.messageListEl.replaceChildren();
+      this._renderedMessageIds = [];
     }
 
+    const fragment = document.createDocumentFragment();
+    for (let i = startIndex; i < messages.length; i += 1) {
+      const msg = messages[i];
+      fragment.appendChild(this._buildMessageNode(msg, currentUserId));
+      this._renderedMessageIds.push(msg.id);
+    }
+
+    this._renderedChatId = activeChatId;
     this.messageListEl.appendChild(fragment);
     this.messageListEl.scrollTop = this.messageListEl.scrollHeight;
   }
@@ -175,6 +231,8 @@ export class ChatView {
    */
   _handleSendMessage(event) {
     event.preventDefault();
+    this._clearError();
+
     const activeChatId = this.store.state.activeChatId;
     const text = this.messageInputEl.value.trim();
 
@@ -187,10 +245,14 @@ export class ChatView {
       text,
     });
 
-    if (sent) {
-      this.messageInputEl.value = '';
-      this._lastTypingSentAt = 0;
+    if (!sent) {
+      this._showError('Connection lost. Reconnecting to server...');
+      this.messageInputEl.focus();
+      return;
     }
+
+    this.messageInputEl.value = '';
+    this._lastTypingSentAt = 0;
     this.messageInputEl.focus();
   }
 

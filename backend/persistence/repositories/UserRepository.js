@@ -1,6 +1,7 @@
 const mongoose = require('mongoose');
 const IUserRepository = require('../../domain/interfaces/IUserRepository');
 const User = require('../../domain/models/User');
+const { ConflictException } = require('../../domain/exceptions');
 const UserModel = require('../schemas/UserSchema');
 
 /**
@@ -17,8 +18,25 @@ function escapeRegex(value) {
  */
 class UserRepository extends IUserRepository {
   /**
-   * Maps a Mongoose User document to a clean User domain entity.
-   * @param {import('mongoose').Document|null} doc
+   * @param {object} [deps]
+   * @param {{ getSession?: () => import('mongoose').ClientSession|null }|null} [deps.unitOfWork=null]
+   */
+  constructor({ unitOfWork = null } = {}) {
+    super();
+    this.unitOfWork = unitOfWork;
+  }
+
+  /**
+   * @param {import('mongoose').ClientSession|null} [explicitSession=null]
+   * @returns {import('mongoose').ClientSession|null}
+   */
+  _resolveSession(explicitSession = null) {
+    return explicitSession ?? this.unitOfWork?.getSession?.() ?? null;
+  }
+
+  /**
+   * Maps a Mongoose User document or lean object to a clean User domain entity.
+   * @param {object|null} doc
    * @returns {User|null}
    */
   _toDomain(doc) {
@@ -36,15 +54,24 @@ class UserRepository extends IUserRepository {
   }
 
   /**
-   * Persists a new user record.
+   * Persists a new user record and maps unique-index conflicts to ConflictException.
    * @param {object} userData
    * @param {import('mongoose').ClientSession|null} [session=null]
    * @returns {Promise<User>}
    */
   async create(userData, session = null) {
-    const options = session ? { session } : {};
-    const [doc] = await UserModel.create([userData], options);
-    return this._toDomain(doc);
+    const activeSession = this._resolveSession(session);
+    const options = activeSession ? { session: activeSession } : {};
+
+    try {
+      const [doc] = await UserModel.create([userData], options);
+      return this._toDomain(doc);
+    } catch (err) {
+      if (err && err.code === 11000) {
+        throw new ConflictException('Username is already taken', 'USERNAME_TAKEN');
+      }
+      throw err;
+    }
   }
 
   /**
@@ -56,7 +83,7 @@ class UserRepository extends IUserRepository {
     if (!id || !mongoose.Types.ObjectId.isValid(id)) {
       return null;
     }
-    const doc = await UserModel.findById(id).exec();
+    const doc = await UserModel.findById(id).lean().exec();
     return this._toDomain(doc);
   }
 
@@ -75,7 +102,7 @@ class UserRepository extends IUserRepository {
       return [];
     }
 
-    const docs = await UserModel.find({ _id: { $in: validIds } }).exec();
+    const docs = await UserModel.find({ _id: { $in: validIds } }).lean().exec();
     return docs.map((doc) => this._toDomain(doc));
   }
 
@@ -89,7 +116,7 @@ class UserRepository extends IUserRepository {
       return null;
     }
     const normalized = username.trim().toLowerCase();
-    const doc = await UserModel.findOne({ username: normalized }).exec();
+    const doc = await UserModel.findOne({ username: normalized }).lean().exec();
     return this._toDomain(doc);
   }
 
@@ -110,6 +137,8 @@ class UserRepository extends IUserRepository {
       return [];
     }
 
+    const safeLimit = Math.min(Math.max(Number(limit) || 10, 1), 50);
+
     const filter = {
       username: { $regex: `^${escapeRegex(normalized)}` },
     };
@@ -120,7 +149,8 @@ class UserRepository extends IUserRepository {
 
     const docs = await UserModel.find(filter)
       .sort({ username: 1 })
-      .limit(limit)
+      .limit(safeLimit)
+      .lean()
       .exec();
 
     return docs.map((doc) => this._toDomain(doc));

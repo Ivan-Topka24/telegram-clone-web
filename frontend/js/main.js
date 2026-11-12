@@ -8,18 +8,41 @@ import { GroupModalView } from './views/GroupModalView.js';
 
 const store = new Store();
 const httpClient = new HttpClient('/api');
-const socketClient = new SocketClient(store);
+const socketClient = new SocketClient(store, {
+  onUnknownChatMessage: () => refreshChats(),
+});
 
 let authView;
+let refreshingChatsPromise = null;
 
 /**
- * Loads initial chat list and connects the authenticated WebSocket session.
+ * Fetches the latest conversation list and updates Store state.
+ * @returns {Promise<void>}
+ */
+async function refreshChats() {
+  if (refreshingChatsPromise) {
+    return refreshingChatsPromise;
+  }
+
+  refreshingChatsPromise = httpClient
+    .get('/chats')
+    .then((chats) => {
+      store.setState('chats', Array.isArray(chats) ? chats : []);
+    })
+    .finally(() => {
+      refreshingChatsPromise = null;
+    });
+
+  return refreshingChatsPromise;
+}
+
+/**
+ * Loads initial chat list first, then connects the authenticated WebSocket session.
  * @param {string} token
  */
 async function initializeSession(token) {
+  await refreshChats();
   socketClient.connect(token);
-  const chats = await httpClient.get('/chats');
-  store.setState('chats', Array.isArray(chats) ? chats : []);
 }
 
 /**
@@ -63,7 +86,7 @@ window.addEventListener('auth:unauthorized', () => {
  * Restores an existing JWT session on startup or falls back to AuthView.
  */
 async function bootstrap() {
-  const token = localStorage.getItem('accessToken');
+  const token = httpClient.getToken();
   if (!token) {
     authView.show();
     return;

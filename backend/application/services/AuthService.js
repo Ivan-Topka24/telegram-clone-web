@@ -6,6 +6,7 @@ const {
 
 const USERNAME_PATTERN = /^[a-zA-Z0-9_]{3,32}$/;
 const MIN_PASSWORD_LENGTH = 6;
+const MAX_PASSWORD_LENGTH = 72;
 const MAX_DISPLAY_NAME_LENGTH = 64;
 
 /**
@@ -29,7 +30,8 @@ class AuthService {
    * @param {{ username: string, displayName: string, password: string }} input
    * @returns {Promise<{ token: string, user: object }>}
    */
-  async register({ username, displayName, password }) {
+  async register(input = {}) {
+    const { username, displayName, password } = input && typeof input === 'object' ? input : {};
     const normalizedUsername = typeof username === 'string' ? username.trim().toLowerCase() : '';
     const trimmedDisplayName = typeof displayName === 'string' ? displayName.trim() : '';
 
@@ -47,9 +49,13 @@ class AuthService {
       );
     }
 
-    if (typeof password !== 'string' || password.length < MIN_PASSWORD_LENGTH) {
+    if (
+      typeof password !== 'string' ||
+      password.length < MIN_PASSWORD_LENGTH ||
+      password.length > MAX_PASSWORD_LENGTH
+    ) {
       throw new ValidationException(
-        `Password must be at least ${MIN_PASSWORD_LENGTH} characters long`,
+        `Password must be between ${MIN_PASSWORD_LENGTH} and ${MAX_PASSWORD_LENGTH} characters long`,
         'INVALID_PASSWORD'
       );
     }
@@ -82,10 +88,16 @@ class AuthService {
    * @param {{ username: string, password: string }} input
    * @returns {Promise<{ token: string, user: object }>}
    */
-  async login({ username, password }) {
+  async login(input = {}) {
+    const { username, password } = input && typeof input === 'object' ? input : {};
     const normalizedUsername = typeof username === 'string' ? username.trim().toLowerCase() : '';
 
-    if (!normalizedUsername || typeof password !== 'string' || !password) {
+    if (
+      !normalizedUsername ||
+      typeof password !== 'string' ||
+      !password ||
+      password.length > MAX_PASSWORD_LENGTH
+    ) {
       throw new ValidationException('Username and password are required', 'MISSING_CREDENTIALS');
     }
 

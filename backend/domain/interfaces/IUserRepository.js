@@ -42,10 +42,10 @@ class IUserRepository {
    * Searches users whose username starts with the given prefix.
    * @param {string} query
    * @param {string} excludeUserId
-   * @param {number} [limit=20]
+   * @param {number} [limit=10]
    * @returns {Promise<Array<import('../models/User')>>}
    */
-  async searchByUsernamePrefix(query, excludeUserId, limit = 20) {
+  async searchByUsernamePrefix(query, excludeUserId, limit = 10) {
     throw new Error('Not implemented');
   }
 }

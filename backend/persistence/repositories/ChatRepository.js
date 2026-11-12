@@ -4,12 +4,39 @@ const Chat = require('../../domain/models/Chat');
 const ChatModel = require('../schemas/ChatSchema');
 
 /**
+ * Builds a deterministic sorted key for a pair of direct chat participants.
+ * @param {string} userAId
+ * @param {string} userBId
+ * @returns {string}
+ */
+function buildDirectKey(userAId, userBId) {
+  return [String(userAId), String(userBId)].sort().join(':');
+}
+
+/**
  * Mongoose-backed repository for Chat entities.
  */
 class ChatRepository extends IChatRepository {
   /**
-   * Maps a Mongoose Chat document to a clean Chat domain entity.
-   * @param {import('mongoose').Document|null} doc
+   * @param {object} [deps]
+   * @param {{ getSession?: () => import('mongoose').ClientSession|null }|null} [deps.unitOfWork=null]
+   */
+  constructor({ unitOfWork = null } = {}) {
+    super();
+    this.unitOfWork = unitOfWork;
+  }
+
+  /**
+   * @param {import('mongoose').ClientSession|null} [explicitSession=null]
+   * @returns {import('mongoose').ClientSession|null}
+   */
+  _resolveSession(explicitSession = null) {
+    return explicitSession ?? this.unitOfWork?.getSession?.() ?? null;
+  }
+
+  /**
+   * Maps a Mongoose Chat document or lean object to a clean Chat domain entity.
+   * @param {object|null} doc
    * @returns {Chat|null}
    */
   _toDomain(doc) {
@@ -50,7 +77,8 @@ class ChatRepository extends IChatRepository {
    * @returns {Promise<Chat>}
    */
   async create(chatData, session = null) {
-    const options = session ? { session } : {};
+    const activeSession = this._resolveSession(session);
+    const options = activeSession ? { session: activeSession } : {};
     const [doc] = await ChatModel.create([chatData], options);
     return this._toDomain(doc);
   }
@@ -64,7 +92,7 @@ class ChatRepository extends IChatRepository {
     if (!chatId || !mongoose.Types.ObjectId.isValid(chatId)) {
       return null;
     }
-    const doc = await ChatModel.findById(chatId).exec();
+    const doc = await ChatModel.findById(chatId).lean().exec();
     return this._toDomain(doc);
   }
 
@@ -86,9 +114,56 @@ class ChatRepository extends IChatRepository {
       type: 'direct',
       members: { $size: 2 },
       'members.userId': { $all: [userAId, userBId] },
-    }).exec();
+    })
+      .lean()
+      .exec();
 
     return this._toDomain(doc);
+  }
+
+  /**
+   * Atomically finds an existing direct chat or creates a new one using a unique directKey.
+   * Safe against concurrent creation races between the same pair of users.
+   * @param {string} userAId
+   * @param {string} userBId
+   * @returns {Promise<{ chat: Chat, created: boolean }>}
+   */
+  async findOrCreateDirectChat(userAId, userBId) {
+    const existing = await this.findDirectChat(userAId, userBId);
+    if (existing) {
+      return { chat: existing, created: false };
+    }
+
+    const directKey = buildDirectKey(userAId, userBId);
+    const activeSession = this._resolveSession(null);
+    const options = activeSession ? { session: activeSession } : {};
+
+    try {
+      const [doc] = await ChatModel.create(
+        [
+          {
+            type: 'direct',
+            title: null,
+            directKey,
+            members: [
+              { userId: String(userAId), role: 'member' },
+              { userId: String(userBId), role: 'member' },
+            ],
+            updatedAt: new Date(),
+          },
+        ],
+        options
+      );
+      return { chat: this._toDomain(doc), created: true };
+    } catch (err) {
+      if (err && err.code === 11000) {
+        const doc = await ChatModel.findOne({ directKey }).lean().exec();
+        if (doc) {
+          return { chat: this._toDomain(doc), created: false };
+        }
+      }
+      throw err;
+    }
   }
 
   /**
@@ -103,6 +178,7 @@ class ChatRepository extends IChatRepository {
 
     const docs = await ChatModel.find({ 'members.userId': userId })
       .sort({ updatedAt: -1 })
+      .lean()
       .exec();
 
     return docs.map((doc) => this._toDomain(doc));
@@ -121,9 +197,11 @@ class ChatRepository extends IChatRepository {
     }
 
     const updatedAt = lastMessage.createdAt ? new Date(lastMessage.createdAt) : new Date();
+    const activeSession = this._resolveSession(session);
     const options = {
       new: true,
-      ...(session ? { session } : {}),
+      lean: true,
+      ...(activeSession ? { session: activeSession } : {}),
     };
 
     const doc = await ChatModel.findByIdAndUpdate(

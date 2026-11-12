@@ -13,6 +13,7 @@ describe('Application Layer — MessageService', () => {
   let messageRepository;
   let userRepository;
   let realtimeNotifier;
+  let logger;
   let messageService;
 
   const chat = new Chat({
@@ -23,7 +24,7 @@ describe('Application Layer — MessageService', () => {
 
   beforeEach(() => {
     unitOfWork = {
-      execute: jest.fn(async (cb) => cb('mock-session')),
+      execute: jest.fn(async (cb) => cb()),
     };
     chatRepository = {
       findById: jest.fn(),
@@ -40,6 +41,9 @@ describe('Application Layer — MessageService', () => {
     realtimeNotifier = {
       notifyUsers: jest.fn(),
     };
+    logger = {
+      warn: jest.fn(),
+    };
 
     messageService = new MessageService({
       unitOfWork,
@@ -47,6 +51,7 @@ describe('Application Layer — MessageService', () => {
       messageRepository,
       userRepository,
       realtimeNotifier,
+      logger,
     });
   });
 
@@ -59,13 +64,17 @@ describe('Application Layer — MessageService', () => {
     expect(unitOfWork.execute).not.toHaveBeenCalled();
   });
 
-  test('sendMessage() throws ValidationException for empty text', async () => {
+  test('sendMessage() throws ValidationException for empty or oversized text', async () => {
     await expect(
       messageService.sendMessage({ senderId: 'u1', chatId: 'c1', text: '   ' })
     ).rejects.toThrow(ValidationException);
+
+    await expect(
+      messageService.sendMessage({ senderId: 'u1', chatId: 'c1', text: 'a'.repeat(4097) })
+    ).rejects.toThrow(ValidationException);
   });
 
-  test('sendMessage() runs UnitOfWork, updates lastMessage, and broadcasts message:new', async () => {
+  test('sendMessage() runs UnitOfWork without leaking session, updates lastMessage, and broadcasts message:new', async () => {
     chatRepository.findById.mockResolvedValue(chat);
     userRepository.findById.mockResolvedValue(
       new User({ id: 'u1', username: 'alice', displayName: 'Alice' })
@@ -89,13 +98,11 @@ describe('Application Layer — MessageService', () => {
 
     expect(unitOfWork.execute).toHaveBeenCalledTimes(1);
     expect(messageRepository.create).toHaveBeenCalledWith(
-      expect.objectContaining({ chatId: 'c1', senderId: 'u1', text: 'Hello Bob!' }),
-      'mock-session'
+      expect.objectContaining({ chatId: 'c1', senderId: 'u1', text: 'Hello Bob!' })
     );
     expect(chatRepository.updateLastMessage).toHaveBeenCalledWith(
       'c1',
-      expect.objectContaining({ text: 'Hello Bob!', senderId: 'u1' }),
-      'mock-session'
+      expect.objectContaining({ text: 'Hello Bob!', senderId: 'u1' })
     );
     expect(realtimeNotifier.notifyUsers).toHaveBeenCalledWith(
       ['u1', 'u2'],
@@ -109,5 +116,42 @@ describe('Application Layer — MessageService', () => {
       })
     );
     expect(dto.senderName).toBe('Alice');
+  });
+
+  test('sendMessage() isolates realtime notification errors after persistence', async () => {
+    chatRepository.findById.mockResolvedValue(chat);
+    userRepository.findById.mockResolvedValue(
+      new User({ id: 'u1', username: 'alice', displayName: 'Alice' })
+    );
+    messageRepository.create.mockResolvedValue(
+      new Message({ id: 'm1', chatId: 'c1', senderId: 'u1', text: 'Hi', createdAt: new Date() })
+    );
+    realtimeNotifier.notifyUsers.mockImplementation(() => {
+      throw new Error('Socket failure');
+    });
+
+    const dto = await messageService.sendMessage({ senderId: 'u1', chatId: 'c1', text: 'Hi' });
+    expect(dto.id).toBe('m1');
+    expect(logger.warn).toHaveBeenCalledTimes(1);
+  });
+
+  test('getChatHistory() passes clamped pagination limit and before cursor', async () => {
+    chatRepository.findById.mockResolvedValue(chat);
+    messageRepository.findByChatId.mockResolvedValue([]);
+
+    await messageService.getChatHistory('u1', 'c1', {
+      limit: '250',
+      before: '2026-01-01T00:00:00.000Z',
+    });
+
+    expect(messageRepository.findByChatId).toHaveBeenCalledWith(
+      'c1',
+      100,
+      new Date('2026-01-01T00:00:00.000Z')
+    );
+
+    await expect(
+      messageService.getChatHistory('u1', 'c1', { before: 'not-a-date' })
+    ).rejects.toThrow(ValidationException);
   });
 });

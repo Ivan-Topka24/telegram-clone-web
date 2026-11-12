@@ -8,13 +8,15 @@ class MongoDbContext {
    * @param {object} config
    * @param {string} config.mongoUri
    * @param {{ info: Function, warn: Function, error: Function }} [config.logger]
+   * @param {typeof mongoose} [config.mongooseInstance]
    */
-  constructor({ mongoUri, logger = console }) {
+  constructor({ mongoUri, logger = console, mongooseInstance = mongoose }) {
     if (!mongoUri) {
       throw new Error('MongoDbContext requires a mongoUri');
     }
     this.mongoUri = mongoUri;
     this.logger = logger;
+    this.mongoose = mongooseInstance;
     this._listenersBound = false;
   }
 
@@ -26,15 +28,15 @@ class MongoDbContext {
       return;
     }
 
-    mongoose.connection.on('connected', () => {
+    this.mongoose.connection.on('connected', () => {
       this.logger.info('MongoDB connected');
     });
 
-    mongoose.connection.on('error', (err) => {
+    this.mongoose.connection.on('error', (err) => {
       this.logger.error('MongoDB connection error', err);
     });
 
-    mongoose.connection.on('disconnected', () => {
+    this.mongoose.connection.on('disconnected', () => {
       this.logger.warn('MongoDB disconnected');
     });
 
@@ -42,12 +44,16 @@ class MongoDbContext {
   }
 
   /**
-   * Establishes the connection to MongoDB.
+   * Establishes the connection to MongoDB and ensures schema indexes are initialized.
    * @returns {Promise<typeof mongoose>}
    */
   async connect() {
     this._bindListeners();
-    return mongoose.connect(this.mongoUri);
+    const connection = await this.mongoose.connect(this.mongoUri);
+    await Promise.all(
+      Object.values(this.mongoose.models).map((model) => model.init())
+    );
+    return connection;
   }
 
   /**
@@ -55,8 +61,8 @@ class MongoDbContext {
    * @returns {Promise<void>}
    */
   async disconnect() {
-    if (mongoose.connection.readyState !== 0) {
-      await mongoose.disconnect();
+    if (this.mongoose.connection.readyState !== 0) {
+      await this.mongoose.disconnect();
     }
   }
 }

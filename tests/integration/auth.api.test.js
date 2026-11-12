@@ -1,11 +1,12 @@
 const request = require('supertest');
-const container = require('../../backend/container');
+const { createContainer } = require('../../backend/container');
 const testDb = require('../setup/testDb');
 
 describe('Integration — /api/auth', () => {
-  const { app } = container;
+  let app;
 
   beforeAll(async () => {
+    ({ app } = createContainer());
     await testDb.connect();
   });
 
@@ -18,7 +19,6 @@ describe('Integration — /api/auth', () => {
   });
 
   test('registers a user (201), rejects duplicate username (400), logs in (200), and verifies /me (200 vs 401)', async () => {
-    // Register
     const registerRes = await request(app)
       .post('/api/auth/register')
       .send({
@@ -33,7 +33,6 @@ describe('Integration — /api/auth', () => {
     expect(registerRes.body.data.user.username).toBe('alice_dev');
     expect(registerRes.body.data.user.passwordHash).toBeUndefined();
 
-    // Duplicate registration
     const dupRes = await request(app)
       .post('/api/auth/register')
       .send({
@@ -45,7 +44,6 @@ describe('Integration — /api/auth', () => {
     expect(dupRes.status).toBe(400);
     expect(dupRes.body.success).toBe(false);
 
-    // Login wrong password
     const badLoginRes = await request(app)
       .post('/api/auth/login')
       .send({
@@ -55,7 +53,6 @@ describe('Integration — /api/auth', () => {
 
     expect(badLoginRes.status).toBe(401);
 
-    // Login valid credentials
     const loginRes = await request(app)
       .post('/api/auth/login')
       .send({
@@ -66,11 +63,9 @@ describe('Integration — /api/auth', () => {
     expect(loginRes.status).toBe(200);
     expect(loginRes.body.data.token).toBeTruthy();
 
-    // /me without token
     const unauthMeRes = await request(app).get('/api/auth/me');
     expect(unauthMeRes.status).toBe(401);
 
-    // /me with Bearer token
     const meRes = await request(app)
       .get('/api/auth/me')
       .set('Authorization', `Bearer ${loginRes.body.data.token}`);
@@ -78,5 +73,18 @@ describe('Integration — /api/auth', () => {
     expect(meRes.status).toBe(200);
     expect(meRes.body.data.username).toBe('alice_dev');
     expect(meRes.body.data.passwordHash).toBeUndefined();
+  });
+
+  test('rejects invalid input and overly long passwords with 400', async () => {
+    const res = await request(app)
+      .post('/api/auth/register')
+      .send({
+        username: 'alice_longpw',
+        displayName: 'Alice',
+        password: 'a'.repeat(73),
+      });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error.code).toBe('INVALID_PASSWORD');
   });
 });

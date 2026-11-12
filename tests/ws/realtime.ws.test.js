@@ -43,8 +43,8 @@ describe('E2E WebSocket — WsGatewayController', () => {
   let port;
 
   beforeAll(async () => {
-    await testDb.connect();
     testContainer = createContainer();
+    await testDb.connect();
     server = http.createServer(testContainer.app);
     testContainer.wsGatewayController.initialize(server);
 
@@ -57,8 +57,12 @@ describe('E2E WebSocket — WsGatewayController', () => {
   });
 
   afterAll(async () => {
-    await testContainer.wsGatewayController.close();
-    await new Promise((resolve) => server.close(resolve));
+    if (testContainer) {
+      await testContainer.wsGatewayController.close();
+    }
+    if (server) {
+      await new Promise((resolve) => server.close(resolve));
+    }
     await testDb.closeDatabase();
   });
 

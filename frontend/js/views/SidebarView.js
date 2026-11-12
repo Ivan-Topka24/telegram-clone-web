@@ -1,7 +1,9 @@
 import { formatTime, getInitials } from '../core/formatters.js';
-
-const SEARCH_DEBOUNCE_MS = 300;
-const MIN_SEARCH_CHARS = 2;
+import {
+  MIN_SEARCH_CHARS,
+  UserSearchController,
+  renderUserSearchList,
+} from '../core/UserSearchController.js';
 
 /**
  * Manages the left sidebar: user profile, logout, debounced user search, and chat list.
@@ -17,8 +19,6 @@ export class SidebarView {
     this.store = store;
     this.httpClient = httpClient;
     this.onLogout = onLogout;
-    this._searchDebounceTimer = null;
-    this._latestSearchToken = 0;
 
     this.currentUserAvatarEl = document.getElementById('current-user-avatar');
     this.currentUserNameEl = document.getElementById('current-user-name');
@@ -26,11 +26,31 @@ export class SidebarView {
     this.logoutBtnEl = document.getElementById('logout-btn');
     this.searchInputEl = document.getElementById('user-search-input');
     this.searchPanelEl = document.getElementById('search-results-panel');
+    this.sidebarErrorEl = document.getElementById('sidebar-error');
     this.searchResultsEl = document.getElementById('search-results');
     this.chatListEl = document.getElementById('chat-list');
 
     this.chatItemTemplate = document.getElementById('chat-item-template');
     this.searchUserTemplate = document.getElementById('search-user-template');
+
+    this._searchController = new UserSearchController({
+      httpClient,
+      onResults: (users) => {
+        this._clearError();
+        this.searchPanelEl.hidden = false;
+        this.store.setState('searchResults', users);
+      },
+      onClear: () => {
+        this._clearError();
+        this.searchPanelEl.hidden = true;
+        this.store.setState('searchResults', []);
+      },
+      onError: (err) => {
+        this.searchPanelEl.hidden = false;
+        this.store.setState('searchResults', []);
+        this._showError(err?.message || 'Failed to search users.');
+      },
+    });
 
     this._bindEvents();
     this._bindSubscriptions();
@@ -38,11 +58,12 @@ export class SidebarView {
 
   _bindEvents() {
     this.logoutBtnEl.addEventListener('click', () => {
+      this._searchController.cancel();
       this.onLogout();
     });
 
     this.searchInputEl.addEventListener('input', () => {
-      this._handleSearchInput();
+      this._searchController.handleInput(this.searchInputEl.value);
     });
   }
 
@@ -53,17 +74,35 @@ export class SidebarView {
     this.store.subscribe('activeChatId', () => this._renderChatList());
   }
 
+  _showError(message) {
+    if (!this.sidebarErrorEl) {
+      return;
+    }
+    this.sidebarErrorEl.textContent = message;
+    this.sidebarErrorEl.hidden = false;
+  }
+
+  _clearError() {
+    if (!this.sidebarErrorEl) {
+      return;
+    }
+    this.sidebarErrorEl.textContent = '';
+    this.sidebarErrorEl.hidden = true;
+  }
+
   /**
    * Renders the authenticated user's profile summary in the sidebar header.
    * @param {object|null} user
    */
   _renderCurrentUser(user) {
     if (!user) {
+      this._searchController.cancel();
       this.currentUserNameEl.textContent = '';
       this.currentUserUsernameEl.textContent = '';
       this.currentUserAvatarEl.textContent = '?';
       this.searchInputEl.value = '';
       this.searchPanelEl.hidden = true;
+      this._clearError();
       return;
     }
 
@@ -73,83 +112,24 @@ export class SidebarView {
   }
 
   /**
-   * Debounces global user search input by 300ms.
-   */
-  _handleSearchInput() {
-    if (this._searchDebounceTimer) {
-      clearTimeout(this._searchDebounceTimer);
-    }
-
-    const query = this.searchInputEl.value.trim();
-    if (query.length < MIN_SEARCH_CHARS) {
-      this._latestSearchToken += 1;
-      this.searchPanelEl.hidden = true;
-      this.store.setState('searchResults', []);
-      return;
-    }
-
-    this._searchDebounceTimer = setTimeout(() => {
-      this._executeSearch(query);
-    }, SEARCH_DEBOUNCE_MS);
-  }
-
-  /**
-   * Queries GET /api/users/search?q=... and updates store.searchResults.
-   * @param {string} query
-   */
-  async _executeSearch(query) {
-    const requestToken = ++this._latestSearchToken;
-
-    try {
-      const users = await this.httpClient.get(`/users/search?q=${encodeURIComponent(query)}`);
-      if (requestToken !== this._latestSearchToken) {
-        return;
-      }
-      this.searchPanelEl.hidden = false;
-      this.store.setState('searchResults', Array.isArray(users) ? users : []);
-    } catch (_err) {
-      if (requestToken === this._latestSearchToken) {
-        this.searchPanelEl.hidden = true;
-        this.store.setState('searchResults', []);
-      }
-    }
-  }
-
-  /**
    * Renders global user search results using #search-user-template.
    * @param {Array<object>} users
    */
   _renderSearchResults(users) {
-    this.searchResultsEl.replaceChildren();
-
-    if (!this.searchInputEl.value.trim() || this.searchInputEl.value.trim().length < MIN_SEARCH_CHARS) {
+    const trimmed = this.searchInputEl.value.trim();
+    if (!trimmed || trimmed.length < MIN_SEARCH_CHARS) {
+      this.searchResultsEl.replaceChildren();
       this.searchPanelEl.hidden = true;
       return;
     }
 
-    if (!Array.isArray(users) || users.length === 0) {
-      const emptyEl = document.createElement('li');
-      emptyEl.className = 'sidebar-empty';
-      emptyEl.textContent = 'No users found';
-      this.searchResultsEl.appendChild(emptyEl);
-      return;
-    }
-
-    const fragment = document.createDocumentFragment();
-
-    for (const user of users) {
-      const clone = this.searchUserTemplate.content.cloneNode(true);
-      const itemEl = clone.querySelector('.search-user-item');
-      itemEl.dataset.userId = user.id;
-      clone.querySelector('.search-user-avatar').textContent = getInitials(user.displayName);
-      clone.querySelector('.search-user-name').textContent = user.displayName;
-      clone.querySelector('.search-user-handle').textContent = `@${user.username}`;
-
-      itemEl.addEventListener('click', () => this._startDirectChat(user.id));
-      fragment.appendChild(clone);
-    }
-
-    this.searchResultsEl.appendChild(fragment);
+    renderUserSearchList({
+      containerEl: this.searchResultsEl,
+      templateEl: this.searchUserTemplate,
+      users,
+      emptyText: 'No users found',
+      onSelect: (user) => this._startDirectChat(user.id),
+    });
   }
 
   /**
@@ -157,6 +137,7 @@ export class SidebarView {
    * @param {string} targetUserId
    */
   async _startDirectChat(targetUserId) {
+    this._clearError();
     try {
       const chat = await this.httpClient.post('/chats/direct', { targetUserId });
       this.searchInputEl.value = '';
@@ -170,8 +151,8 @@ export class SidebarView {
       }
 
       this.store.setState('activeChatId', chat.id);
-    } catch (_err) {
-      // Handled globally if 401; ignore transient network errors.
+    } catch (err) {
+      this._showError(err?.message || 'Unable to open direct chat.');
     }
   }
 

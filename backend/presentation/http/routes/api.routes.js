@@ -9,14 +9,29 @@ const { NotFoundException } = require('../../../domain/exceptions');
  * @param {import('../controllers/UserController')} deps.userController
  * @param {import('../controllers/ChatController')} deps.chatController
  * @param {import('express').RequestHandler} deps.authMiddleware
+ * @param {import('express').RequestHandler} [deps.authRateLimiter]
  * @returns {import('express').Router}
  */
-function createApiRouter({ authController, userController, chatController, authMiddleware }) {
+function createApiRouter({
+  authController,
+  userController,
+  chatController,
+  authMiddleware,
+  authRateLimiter = (_req, _res, next) => next(),
+}) {
   const router = express.Router();
 
   // Auth routes
-  router.post('/auth/register', asyncHandler((req, res) => authController.register(req, res)));
-  router.post('/auth/login', asyncHandler((req, res) => authController.login(req, res)));
+  router.post(
+    '/auth/register',
+    authRateLimiter,
+    asyncHandler((req, res) => authController.register(req, res))
+  );
+  router.post(
+    '/auth/login',
+    authRateLimiter,
+    asyncHandler((req, res) => authController.login(req, res))
+  );
   router.get('/auth/me', authMiddleware, asyncHandler((req, res) => authController.me(req, res)));
 
   // User routes

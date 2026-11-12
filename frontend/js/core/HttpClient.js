@@ -1,39 +1,72 @@
 const TOKEN_STORAGE_KEY = 'accessToken';
 
+function getDefaultTokenStorage() {
+  if (typeof localStorage !== 'undefined') {
+    return localStorage;
+  }
+  return {
+    getItem: () => null,
+    setItem: () => {},
+    removeItem: () => {},
+  };
+}
+
+function getDefaultUnauthorizedHandler() {
+  return () => {
+    if (typeof window !== 'undefined' && typeof CustomEvent !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('auth:unauthorized'));
+    }
+  };
+}
+
 /**
  * HTTP client wrapper around fetch('/api/...') with JWT injection and 401 handling.
  */
 export class HttpClient {
   /**
    * @param {string} [baseUrl='/api']
+   * @param {object} [options]
+   * @param {{ getItem: Function, setItem: Function, removeItem: Function }} [options.tokenStorage]
+   * @param {() => void} [options.onUnauthorized]
+   * @param {typeof fetch} [options.fetchImpl]
    */
-  constructor(baseUrl = '/api') {
+  constructor(
+    baseUrl = '/api',
+    {
+      tokenStorage = getDefaultTokenStorage(),
+      onUnauthorized = getDefaultUnauthorizedHandler(),
+      fetchImpl = (...args) => fetch(...args),
+    } = {}
+  ) {
     this.baseUrl = baseUrl;
+    this.tokenStorage = tokenStorage;
+    this.onUnauthorized = onUnauthorized;
+    this.fetchImpl = fetchImpl;
   }
 
   /**
-   * Retrieves the persisted JWT token from localStorage.
+   * Retrieves the persisted JWT token.
    * @returns {string|null}
    */
   getToken() {
-    return localStorage.getItem(TOKEN_STORAGE_KEY);
+    return this.tokenStorage.getItem(TOKEN_STORAGE_KEY);
   }
 
   /**
-   * Persists the JWT token in localStorage.
+   * Persists the JWT token.
    * @param {string} token
    */
   setToken(token) {
     if (token) {
-      localStorage.setItem(TOKEN_STORAGE_KEY, token);
+      this.tokenStorage.setItem(TOKEN_STORAGE_KEY, token);
     }
   }
 
   /**
-   * Clears the stored JWT token from localStorage.
+   * Clears the stored JWT token.
    */
   clearToken() {
-    localStorage.removeItem(TOKEN_STORAGE_KEY);
+    this.tokenStorage.removeItem(TOKEN_STORAGE_KEY);
   }
 
   /**
@@ -56,7 +89,7 @@ export class HttpClient {
       body = JSON.stringify(body);
     }
 
-    const response = await fetch(`${this.baseUrl}${endpoint}`, {
+    const response = await this.fetchImpl(`${this.baseUrl}${endpoint}`, {
       ...options,
       headers,
       body,
@@ -71,7 +104,7 @@ export class HttpClient {
 
     if (response.status === 401) {
       this.clearToken();
-      window.dispatchEvent(new CustomEvent('auth:unauthorized'));
+      this.onUnauthorized();
     }
 
     if (!response.ok || (payload && payload.success === false)) {

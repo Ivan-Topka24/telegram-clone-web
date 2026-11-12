@@ -4,7 +4,7 @@ const { MongoMemoryReplSet, MongoMemoryServer } = require('mongodb-memory-server
 let mongoServer = null;
 
 /**
- * Starts an in-memory MongoDB replica set (falling back to standalone if needed)
+ * Starts an in-memory MongoDB replica set (falling back to standalone with warning if needed)
  * and connects Mongoose.
  */
 async function connect() {
@@ -16,12 +16,18 @@ async function connect() {
     mongoServer = await MongoMemoryReplSet.create({
       replSet: { count: 1, storageEngine: 'wiredTiger' },
     });
-  } catch (_err) {
+  } catch (err) {
+    console.warn(
+      `[testDb] MongoMemoryReplSet unavailable (${err.message}); falling back to standalone MongoMemoryServer (transactions will use fallback)`
+    );
     mongoServer = await MongoMemoryServer.create();
   }
 
   const uri = mongoServer.getUri();
   await mongoose.connect(uri);
+  await Promise.all(
+    Object.values(mongoose.models).map((model) => model.init())
+  );
 }
 
 /**

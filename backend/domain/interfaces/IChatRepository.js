@@ -3,12 +3,11 @@
  */
 class IChatRepository {
   /**
-   * Persists a new chat record, optionally inside an active transaction session.
+   * Persists a new chat record.
    * @param {object} data
-   * @param {any} [session=null]
    * @returns {Promise<import('../models/Chat')>}
    */
-  async create(data, session = null) {
+  async create(data) {
     throw new Error('Not implemented');
   }
 
@@ -32,6 +31,16 @@ class IChatRepository {
   }
 
   /**
+   * Atomically finds an existing direct chat between two users or creates a new one.
+   * @param {string} userA
+   * @param {string} userB
+   * @returns {Promise<{ chat: import('../models/Chat'), created: boolean }>}
+   */
+  async findOrCreateDirectChat(userA, userB) {
+    throw new Error('Not implemented');
+  }
+
+  /**
    * Retrieves all chats a user participates in, ordered by recent activity.
    * @param {string} userId
    * @returns {Promise<Array<import('../models/Chat')>>}
@@ -44,10 +53,9 @@ class IChatRepository {
    * Updates the embedded lastMessage snapshot and updatedAt timestamp on a chat.
    * @param {string} chatId
    * @param {object} messageData
-   * @param {any} [session=null]
    * @returns {Promise<import('../models/Chat')|null>}
    */
-  async updateLastMessage(chatId, messageData, session = null) {
+  async updateLastMessage(chatId, messageData) {
     throw new Error('Not implemented');
   }
 }
