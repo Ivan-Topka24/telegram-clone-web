@@ -1,4 +1,4 @@
-const TOKEN_STORAGE_KEY = 'telegram_clone_jwt';
+const TOKEN_STORAGE_KEY = 'accessToken';
 
 /**
  * HTTP client wrapper around fetch('/api/...') with JWT injection and 401 handling.
