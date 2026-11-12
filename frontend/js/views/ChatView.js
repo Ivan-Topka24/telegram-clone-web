@@ -1,4 +1,5 @@
 import { formatTime, getInitials } from '../core/formatters.js';
+import { MessageDto, SendMessageRequestDto, TypingEventDto } from '../dtos/MessageDto.js';
 
 const TYPING_THROTTLE_MS = 1500;
 
@@ -97,11 +98,14 @@ export class ChatView {
     const loadToken = ++this._activeLoadToken;
 
     try {
-      const messages = await this.httpClient.get(`/chats/${encodeURIComponent(chatId)}/messages`);
+      const rawMessages = await this.httpClient.get(`/chats/${encodeURIComponent(chatId)}/messages`);
       if (loadToken !== this._activeLoadToken || this.store.state.activeChatId !== chatId) {
         return;
       }
-      this.store.setState('messages', Array.isArray(messages) ? messages : []);
+      const messageModels = Array.isArray(rawMessages)
+        ? rawMessages.map((raw) => MessageDto.fromPayload(raw).toModel())
+        : [];
+      this.store.setState('messages', messageModels);
       this.messageInputEl.focus();
     } catch (err) {
       if (loadToken === this._activeLoadToken) {
@@ -176,7 +180,9 @@ export class ChatView {
   _buildMessageNode(msg, currentUserId) {
     const clone = this.messageTemplate.content.cloneNode(true);
     const rowEl = clone.querySelector('.message-row');
-    const isOwn = Boolean(currentUserId && msg.senderId === currentUserId);
+    const isOwn = typeof msg.isOwn === 'function'
+      ? msg.isOwn(currentUserId)
+      : Boolean(currentUserId && msg.senderId === currentUserId);
     rowEl.classList.add(isOwn ? 'own' : 'incoming');
     rowEl.dataset.messageId = msg.id || '';
 
@@ -240,10 +246,11 @@ export class ChatView {
       return;
     }
 
-    const sent = this.socketClient.send('message:send', {
+    const sendDto = new SendMessageRequestDto({
       chatId: activeChatId,
       text,
     });
+    const sent = this.socketClient.send('message:send', sendDto);
 
     if (!sent) {
       this._showError('Connection lost. Reconnecting to server...');
@@ -271,6 +278,6 @@ export class ChatView {
     }
 
     this._lastTypingSentAt = now;
-    this.socketClient.send('chat:typing', { chatId: activeChatId });
+    this.socketClient.send('chat:typing', new TypingEventDto({ chatId: activeChatId }));
   }
 }

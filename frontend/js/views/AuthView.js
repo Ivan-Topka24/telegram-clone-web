@@ -1,3 +1,5 @@
+import { AuthResultDto, LoginRequestDto, RegisterRequestDto } from '../dtos/AuthDto.js';
+
 /**
  * Manages Login / Register tab switching, credential submission, and auth overlay visibility.
  */
@@ -105,19 +107,20 @@ export class AuthView {
     }
 
     const endpoint = this.mode === 'register' ? '/auth/register' : '/auth/login';
-    const payload =
+    const requestDto =
       this.mode === 'register'
-        ? { username, displayName, password }
-        : { username, password };
+        ? new RegisterRequestDto({ username, displayName, password })
+        : new LoginRequestDto({ username, password });
 
     this.submitBtnEl.disabled = true;
 
     try {
-      const result = await this.httpClient.post(endpoint, payload);
-      this.httpClient.setToken(result.token);
-      this.store.setState('currentUser', result.user);
+      const rawResult = await this.httpClient.post(endpoint, requestDto);
+      const authDto = AuthResultDto.fromPayload(rawResult);
+      this.httpClient.setToken(authDto.token);
+      this.store.setState('currentUser', authDto.user.toModel());
       this.hide();
-      await this.onAuthenticated(result.token);
+      await this.onAuthenticated(authDto.token);
     } catch (err) {
       this._showError(err.message || 'Authentication failed.');
     } finally {

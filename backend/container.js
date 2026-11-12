@@ -16,6 +16,7 @@ const MessageRepository = require('./persistence/repositories/MessageRepository'
 
 // Application Mappers & Services
 const ChatDtoMapper = require('./application/mappers/ChatDtoMapper');
+const MessageDtoMapper = require('./application/mappers/MessageDtoMapper');
 const AuthService = require('./application/services/AuthService');
 const UserService = require('./application/services/UserService');
 const ChatService = require('./application/services/ChatService');
@@ -63,6 +64,7 @@ function createContainer(configOverrides = {}) {
 
   // Application Mappers & Services
   const chatDtoMapper = new ChatDtoMapper();
+  const messageDtoMapper = new MessageDtoMapper();
   const authService = new AuthService({
     userRepository,
     passwordHasher,
@@ -84,6 +86,7 @@ function createContainer(configOverrides = {}) {
     messageRepository,
     userRepository,
     realtimeNotifier,
+    messageDtoMapper,
     logger,
   });
   const presenceService = new PresenceService({
@@ -136,6 +139,7 @@ function createContainer(configOverrides = {}) {
     chatRepository,
     messageRepository,
     chatDtoMapper,
+    messageDtoMapper,
     authService,
     userService,
     chatService,

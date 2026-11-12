@@ -3,6 +3,7 @@ const {
   UnauthorizedException,
   NotFoundException,
 } = require('../../domain/exceptions');
+const { UserDto, AuthResultDto } = require('../dtos');
 
 const USERNAME_PATTERN = /^[a-zA-Z0-9_]{3,32}$/;
 const MIN_PASSWORD_LENGTH = 6;
@@ -77,16 +78,16 @@ class AuthService {
       username: user.username,
     });
 
-    return {
+    return new AuthResultDto({
       token,
-      user: user.toPublicProfile(),
-    };
+      user: UserDto.fromDomain(user),
+    });
   }
 
   /**
    * Authenticates an existing user by username and password.
    * @param {{ username: string, password: string }} input
-   * @returns {Promise<{ token: string, user: object }>}
+   * @returns {Promise<AuthResultDto>}
    */
   async login(input = {}) {
     const { username, password } = input && typeof input === 'object' ? input : {};
@@ -116,16 +117,16 @@ class AuthService {
       username: user.username,
     });
 
-    return {
+    return new AuthResultDto({
       token,
-      user: user.toPublicProfile(),
-    };
+      user: UserDto.fromDomain(user),
+    });
   }
 
   /**
-   * Retrieves the authenticated user's public profile.
+   * Retrieves the authenticated user's public profile DTO.
    * @param {string} userId
-   * @returns {Promise<object>}
+   * @returns {Promise<UserDto>}
    */
   async getCurrentUser(userId) {
     const user = await this.userRepository.findById(userId);
@@ -133,7 +134,7 @@ class AuthService {
       throw new NotFoundException('User not found', 'USER_NOT_FOUND');
     }
 
-    return user.toPublicProfile();
+    return UserDto.fromDomain(user);
   }
 }
 

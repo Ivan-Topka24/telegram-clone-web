@@ -1,13 +1,15 @@
+const { ChatDto, UserDto } = require('../dtos');
+
 /**
- * Maps Chat domain entities to viewer-specific response DTOs.
+ * Maps Chat domain entities to viewer-specific ChatDto instances.
  */
 class ChatDtoMapper {
   /**
-   * Converts a Chat domain entity into a DTO enriched with displayTitle and peer metadata.
+   * Converts a Chat domain entity into a ChatDto enriched with displayTitle and peer metadata.
    * @param {import('../../domain/models/Chat')} chat
    * @param {string} viewerUserId
    * @param {Map<string, import('../../domain/models/User')>} [usersById]
-   * @returns {object}
+   * @returns {ChatDto}
    */
   toDto(chat, viewerUserId, usersById = new Map()) {
     let displayTitle = chat.title || 'Untitled Group';
@@ -18,11 +20,11 @@ class ChatDtoMapper {
         (member) => String(member.userId) !== String(viewerUserId)
       );
       const peerUser = peerMember ? usersById.get(String(peerMember.userId)) : null;
-      peer = peerUser ? peerUser.toPublicProfile() : null;
+      peer = peerUser ? UserDto.fromDomain(peerUser) : null;
       displayTitle = peer ? peer.displayName : 'Deleted User';
     }
 
-    return {
+    return new ChatDto({
       id: chat.id,
       type: chat.type,
       title: chat.title,
@@ -31,7 +33,7 @@ class ChatDtoMapper {
       members: chat.members,
       lastMessage: chat.lastMessage,
       updatedAt: chat.updatedAt,
-    };
+    });
   }
 }
 

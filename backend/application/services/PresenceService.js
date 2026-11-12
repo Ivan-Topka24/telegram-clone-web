@@ -1,3 +1,5 @@
+const { TypingIndicatorDto } = require('../dtos');
+
 /**
  * Handles transient real-time presence use cases such as typing indicators.
  */
@@ -13,7 +15,7 @@ class PresenceService {
   }
 
   /**
-   * Verifies chat membership and broadcasts a typing indicator to other chat members.
+   * Verifies chat membership and broadcasts a TypingIndicatorDto to other chat members.
    * @param {{ userId: string, username: string, chatId: string }} input
    * @returns {Promise<void>}
    */
@@ -33,11 +35,12 @@ class PresenceService {
       .filter((memberId) => memberId !== actorId);
 
     if (recipientIds.length > 0) {
-      this.realtimeNotifier.notifyUsers(recipientIds, 'chat:typing', {
+      const typingDto = new TypingIndicatorDto({
         chatId: chat.id,
         userId: actorId,
         username,
       });
+      this.realtimeNotifier.notifyUsers(recipientIds, 'chat:typing', typingDto);
     }
   }
 }

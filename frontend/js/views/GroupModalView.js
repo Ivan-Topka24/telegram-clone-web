@@ -1,3 +1,4 @@
+import { ChatDto, CreateGroupChatRequestDto } from '../dtos/ChatDto.js';
 import {
   UserSearchController,
   renderUserSearchList,
@@ -187,7 +188,9 @@ export class GroupModalView {
     this.submitBtnEl.disabled = true;
 
     try {
-      const chat = await this.httpClient.post('/chats/group', { title, memberIds });
+      const requestDto = new CreateGroupChatRequestDto({ title, memberIds });
+      const rawChat = await this.httpClient.post('/chats/group', requestDto);
+      const chat = ChatDto.fromPayload(rawChat).toModel();
       const chats = [...this.store.state.chats];
       if (!chats.some((existing) => existing.id === chat.id)) {
         chats.unshift(chat);

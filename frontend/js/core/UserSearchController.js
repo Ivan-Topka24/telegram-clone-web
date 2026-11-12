@@ -1,4 +1,5 @@
 import { getInitials } from './formatters.js';
+import { UserDto } from '../dtos/UserDto.js';
 
 export const SEARCH_DEBOUNCE_MS = 300;
 export const MIN_SEARCH_CHARS = 2;
@@ -64,11 +65,14 @@ export class UserSearchController {
     const requestToken = ++this._latestToken;
 
     try {
-      const users = await this.httpClient.get(`/users/search?q=${encodeURIComponent(query)}`);
+      const rawUsers = await this.httpClient.get(`/users/search?q=${encodeURIComponent(query)}`);
       if (requestToken !== this._latestToken) {
         return;
       }
-      this.onResults(Array.isArray(users) ? users : []);
+      const models = Array.isArray(rawUsers)
+        ? rawUsers.map((raw) => UserDto.fromPayload(raw).toModel())
+        : [];
+      this.onResults(models);
     } catch (err) {
       if (requestToken === this._latestToken) {
         this.onError(err);

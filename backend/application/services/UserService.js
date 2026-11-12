@@ -1,3 +1,5 @@
+const { UserDto } = require('../dtos');
+
 const MIN_SEARCH_QUERY_LENGTH = 2;
 const DEFAULT_SEARCH_LIMIT = 10;
 const MAX_SEARCH_LIMIT = 50;
@@ -20,7 +22,7 @@ class UserService {
    * @param {string} query
    * @param {string} currentUserId
    * @param {number} [limit=10]
-   * @returns {Promise<Array<object>>}
+   * @returns {Promise<Array<UserDto>>}
    */
   async searchUsers(query, currentUserId, limit = DEFAULT_SEARCH_LIMIT) {
     if (typeof query !== 'string') {
@@ -43,7 +45,7 @@ class UserService {
       currentUserId,
       safeLimit
     );
-    return users.map((user) => user.toPublicProfile());
+    return users.map((user) => UserDto.fromDomain(user));
   }
 }
 

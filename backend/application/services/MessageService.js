@@ -3,6 +3,7 @@ const {
   ForbiddenException,
   NotFoundException,
 } = require('../../domain/exceptions');
+const MessageDtoMapper = require('../mappers/MessageDtoMapper');
 
 const MAX_MESSAGE_LENGTH = 4096;
 const DEFAULT_HISTORY_LIMIT = 50;
@@ -19,6 +20,7 @@ class MessageService {
    * @param {import('../../domain/interfaces/IMessageRepository')} deps.messageRepository
    * @param {import('../../domain/interfaces/IUserRepository')} deps.userRepository
    * @param {import('../../domain/interfaces/IRealtimeNotifier')} deps.realtimeNotifier
+   * @param {MessageDtoMapper} [deps.messageDtoMapper]
    * @param {{ warn: Function }} [deps.logger]
    */
   constructor({
@@ -27,6 +29,7 @@ class MessageService {
     messageRepository,
     userRepository,
     realtimeNotifier,
+    messageDtoMapper = new MessageDtoMapper(),
     logger = null,
   }) {
     this.unitOfWork = unitOfWork;
@@ -34,6 +37,7 @@ class MessageService {
     this.messageRepository = messageRepository;
     this.userRepository = userRepository;
     this.realtimeNotifier = realtimeNotifier;
+    this.messageDtoMapper = messageDtoMapper;
     this.logger = logger;
   }
 
@@ -61,11 +65,11 @@ class MessageService {
   }
 
   /**
-   * Fetches chronological message history for a chat and enriches sender display names.
+   * Fetches chronological message history for a chat and maps entities to MessageDto instances.
    * @param {string} userId
    * @param {string} chatId
    * @param {{ limit?: number|string, before?: string|Date|null }} [options]
-   * @returns {Promise<Array<object>>}
+   * @returns {Promise<Array<import('../dtos/MessageDto')>>}
    */
   async getChatHistory(userId, chatId, { limit = DEFAULT_HISTORY_LIMIT, before = null } = {}) {
     await this._requireChatMember(userId, chatId);
@@ -93,23 +97,15 @@ class MessageService {
     const senders = await this.userRepository.findByIds(senderIds);
     const sendersById = new Map(senders.map((user) => [user.id, user]));
 
-    return messages.map((msg) => {
-      const sender = sendersById.get(msg.senderId);
-      return {
-        id: msg.id,
-        chatId: msg.chatId,
-        senderId: msg.senderId,
-        senderName: sender ? sender.displayName : 'Deleted User',
-        text: msg.text,
-        createdAt: msg.createdAt,
-      };
-    });
+    return messages.map((msg) =>
+      this.messageDtoMapper.toDto(msg, sendersById.get(msg.senderId) || null)
+    );
   }
 
   /**
-   * Validates, persists atomically via UnitOfWork, and broadcasts a new chat message.
+   * Validates, persists atomically via UnitOfWork, and broadcasts a MessageDto.
    * @param {{ senderId: string, chatId: string, text: string }} input
-   * @returns {Promise<object>}
+   * @returns {Promise<import('../dtos/MessageDto')>}
    */
   async sendMessage(input = {}) {
     const { senderId, chatId, text } = input && typeof input === 'object' ? input : {};
@@ -150,14 +146,7 @@ class MessageService {
       return createdMessage;
     });
 
-    const messageDto = {
-      id: message.id,
-      chatId: message.chatId,
-      senderId: message.senderId,
-      senderName: sender.displayName,
-      text: message.text,
-      createdAt: message.createdAt,
-    };
+    const messageDto = this.messageDtoMapper.toDto(message, sender);
 
     const memberIds = chat.members.map((member) => String(member.userId));
     try {

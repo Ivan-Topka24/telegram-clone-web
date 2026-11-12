@@ -1,5 +1,6 @@
 const Chat = require('../../../backend/domain/models/Chat');
 const PresenceService = require('../../../backend/application/services/PresenceService');
+const { TypingIndicatorDto } = require('../../../backend/application/dtos');
 
 describe('Application Layer — PresenceService', () => {
   let chatRepository;
@@ -24,7 +25,7 @@ describe('Application Layer — PresenceService', () => {
     expect(realtimeNotifier.notifyUsers).not.toHaveBeenCalled();
   });
 
-  test('notifies all other chat members when actor is a valid member', async () => {
+  test('notifies all other chat members with a TypingIndicatorDto when actor is a valid member', async () => {
     chatRepository.findById.mockResolvedValue(
       new Chat({
         id: 'c1',
@@ -40,10 +41,14 @@ describe('Application Layer — PresenceService', () => {
 
     await presenceService.notifyTyping({ userId: 'u1', username: 'alice', chatId: 'c1' });
 
-    expect(realtimeNotifier.notifyUsers).toHaveBeenCalledWith(['u2', 'u3'], 'chat:typing', {
-      chatId: 'c1',
-      userId: 'u1',
-      username: 'alice',
-    });
+    expect(realtimeNotifier.notifyUsers).toHaveBeenCalledWith(
+      ['u2', 'u3'],
+      'chat:typing',
+      expect.any(TypingIndicatorDto)
+    );
+    const emittedDto = realtimeNotifier.notifyUsers.mock.calls[0][2];
+    expect(emittedDto).toEqual(
+      new TypingIndicatorDto({ chatId: 'c1', userId: 'u1', username: 'alice' })
+    );
   });
 });

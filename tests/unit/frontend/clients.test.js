@@ -1,30 +1,118 @@
 const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
-const { pathToFileURL } = require('url');
 
-async function loadEsmClass(relativePath, className) {
-  const fullPath = path.resolve(__dirname, relativePath);
-  try {
-    const mod = await import(pathToFileURL(fullPath).href);
-    return mod[className];
-  } catch (_err) {
-    const source = fs
-      .readFileSync(fullPath, 'utf8')
-      .replace(new RegExp(`\\bexport\\s+class\\s+${className}\\b`), `class ${className}`);
-    return vm.runInThisContext(`(() => { 'use strict'; ${source}; return ${className}; })()`);
+const moduleCache = new Map();
+
+function loadEsmSync(filePath) {
+  const resolved = path.resolve(filePath);
+  if (moduleCache.has(resolved)) {
+    return moduleCache.get(resolved);
   }
+
+  let source = fs.readFileSync(resolved, 'utf8');
+  const dir = path.dirname(resolved);
+  const deps = {};
+
+  source = source.replace(
+    /import\s*\{([^}]+)\}\s*from\s*['"]([^'"]+)['"];?\s*/g,
+    (_match, names, relPath) => {
+      const depExports = loadEsmSync(path.resolve(dir, relPath));
+      const cleanNames = names
+        .split(',')
+        .map((n) => n.trim())
+        .filter(Boolean);
+      const assignments = cleanNames
+        .map((name) => {
+          deps[name] = depExports[name];
+          return `const ${name} = __deps[${JSON.stringify(name)}];`;
+        })
+        .join('\n');
+      return `${assignments}\n`;
+    }
+  );
+
+  const exportedNames = [];
+  source = source.replace(/\bexport\s+(class|function)\s+([A-Za-z0-9_]+)/g, (_m, kind, name) => {
+    exportedNames.push(name);
+    return `${kind} ${name}`;
+  });
+  source = source.replace(/\bexport\s+const\s+([A-Za-z0-9_]+)/g, (_m, name) => {
+    exportedNames.push(name);
+    return `const ${name}`;
+  });
+
+  const factory = vm.runInThisContext(
+    `(__deps) => { 'use strict'; ${source}; return { ${exportedNames.join(', ')} }; }`
+  );
+  const exportsObj = factory(deps);
+  moduleCache.set(resolved, exportsObj);
+  return exportsObj;
 }
 
-describe('Frontend Core — HttpClient, SocketClient & Store immutability', () => {
+describe('Frontend Core — DTOs, Models, HttpClient, SocketClient & Store', () => {
   let Store;
   let HttpClient;
   let SocketClient;
+  let UserModel;
+  let ChatModel;
+  let MessageModel;
+  let UserDto;
+  let ChatDto;
+  let MessageDto;
 
-  beforeAll(async () => {
-    Store = await loadEsmClass('../../../frontend/js/core/Store.js', 'Store');
-    HttpClient = await loadEsmClass('../../../frontend/js/core/HttpClient.js', 'HttpClient');
-    SocketClient = await loadEsmClass('../../../frontend/js/core/SocketClient.js', 'SocketClient');
+  beforeAll(() => {
+    ({ Store } = loadEsmSync(path.resolve(__dirname, '../../../frontend/js/core/Store.js')));
+    ({ HttpClient } = loadEsmSync(
+      path.resolve(__dirname, '../../../frontend/js/core/HttpClient.js')
+    ));
+    ({ SocketClient } = loadEsmSync(
+      path.resolve(__dirname, '../../../frontend/js/core/SocketClient.js')
+    ));
+    ({ UserModel } = loadEsmSync(
+      path.resolve(__dirname, '../../../frontend/js/models/UserModel.js')
+    ));
+    ({ ChatModel } = loadEsmSync(
+      path.resolve(__dirname, '../../../frontend/js/models/ChatModel.js')
+    ));
+    ({ MessageModel } = loadEsmSync(
+      path.resolve(__dirname, '../../../frontend/js/models/MessageModel.js')
+    ));
+    ({ UserDto } = loadEsmSync(path.resolve(__dirname, '../../../frontend/js/dtos/UserDto.js')));
+    ({ ChatDto } = loadEsmSync(path.resolve(__dirname, '../../../frontend/js/dtos/ChatDto.js')));
+    ({ MessageDto } = loadEsmSync(
+      path.resolve(__dirname, '../../../frontend/js/dtos/MessageDto.js')
+    ));
+  });
+
+  test('Frontend DTOs convert incoming wire payloads into client Models', () => {
+    const userModel = UserDto.fromPayload({
+      id: 'u1',
+      username: 'alice',
+      displayName: 'Alice Smith',
+    }).toModel();
+    expect(userModel).toBeInstanceOf(UserModel);
+    expect(userModel.getInitials()).toBe('AS');
+
+    const chatModel = ChatDto.fromPayload({
+      id: 'c1',
+      type: 'direct',
+      displayTitle: 'Alice Smith',
+      peer: { id: 'u1', username: 'alice', displayName: 'Alice Smith' },
+    }).toModel();
+    expect(chatModel).toBeInstanceOf(ChatModel);
+    expect(chatModel.peer).toBeInstanceOf(UserModel);
+    expect(chatModel.getPreviewText()).toBe('No messages yet');
+
+    const msgModel = MessageDto.fromPayload({
+      id: 'm1',
+      chatId: 'c1',
+      senderId: 'u1',
+      senderName: 'Alice Smith',
+      text: 'Hello!',
+    }).toModel();
+    expect(msgModel).toBeInstanceOf(MessageModel);
+    expect(msgModel.isOwn('u1')).toBe(true);
   });
 
   test('Store.state returns a frozen shallow snapshot preventing direct mutation', () => {
@@ -62,8 +150,12 @@ describe('Frontend Core — HttpClient, SocketClient & Store immutability', () =
     expect(client.getToken()).toBeNull();
   });
 
-  test('SocketClient surfaces server error frames and triggers unknown chat callback', () => {
+  test('SocketClient converts incoming DTOs to Models, surfaces error frames, and triggers unknown chat callback', () => {
     const store = new Store();
+    const initialChat = new ChatModel({ id: 'c1', type: 'direct', displayTitle: 'Bob' });
+    store.setState('chats', [initialChat]);
+    store.setState('activeChatId', 'c1');
+
     const onError = jest.fn();
     const onUnknownChatMessage = jest.fn();
     const socketClient = new SocketClient(store, {
@@ -71,6 +163,23 @@ describe('Frontend Core — HttpClient, SocketClient & Store immutability', () =
       onUnknownChatMessage,
       eventTarget: null,
     });
+
+    socketClient._handleMessage(
+      JSON.stringify({
+        event: 'message:new',
+        payload: {
+          id: 'm1',
+          chatId: 'c1',
+          senderId: 'u2',
+          senderName: 'Bob',
+          text: 'Hi!',
+          createdAt: '2026-01-01T10:00:00.000Z',
+        },
+      })
+    );
+    expect(store.state.messages[0]).toBeInstanceOf(MessageModel);
+    expect(store.state.chats[0]).toBeInstanceOf(ChatModel);
+    expect(store.state.chats[0].getPreviewText()).toBe('Hi!');
 
     socketClient._handleMessage(
       JSON.stringify({
@@ -83,7 +192,7 @@ describe('Frontend Core — HttpClient, SocketClient & Store immutability', () =
     socketClient._handleMessage(
       JSON.stringify({
         event: 'message:new',
-        payload: { id: 'm1', chatId: 'unknown-chat', senderId: 'u2', text: 'Hello' },
+        payload: { id: 'm2', chatId: 'unknown-chat', senderId: 'u2', text: 'Hello' },
       })
     );
     expect(onUnknownChatMessage).toHaveBeenCalledWith(

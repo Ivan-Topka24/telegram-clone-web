@@ -1,3 +1,6 @@
+import { ChatDto } from '../dtos/ChatDto.js';
+import { MessageDto, TypingIndicatorDto } from '../dtos/MessageDto.js';
+
 const INITIAL_RECONNECT_DELAY_MS = 1000;
 const MAX_RECONNECT_DELAY_MS = 10000;
 const TYPING_TIMEOUT_MS = 3000;
@@ -180,27 +183,32 @@ export class SocketClient {
   }
 
   /**
-   * Updates chat list preview/order and appends to active chat messages.
-   * @param {object} message
+   * Updates chat list preview/order and appends a MessageModel to active chat messages.
+   * @param {object} rawPayload
    */
-  _onNewMessage(message) {
-    if (!message || !message.chatId) {
+  _onNewMessage(rawPayload) {
+    if (!rawPayload || !rawPayload.chatId) {
       return;
     }
 
+    const message = MessageDto.fromPayload(rawPayload).toModel();
     const chats = [...this.store.state.chats];
     const existingIndex = chats.findIndex((c) => c.id === message.chatId);
 
     if (existingIndex !== -1) {
-      const updatedChat = {
-        ...chats[existingIndex],
-        lastMessage: {
-          text: message.text,
-          senderId: message.senderId,
-          createdAt: message.createdAt,
-        },
-        updatedAt: message.createdAt,
-      };
+      const existingChat = chats[existingIndex];
+      const updatedChat =
+        typeof existingChat.withLastMessage === 'function'
+          ? existingChat.withLastMessage(message)
+          : {
+              ...existingChat,
+              lastMessage: {
+                text: message.text,
+                senderId: message.senderId,
+                createdAt: message.createdAt,
+              },
+              updatedAt: message.createdAt,
+            };
       chats.splice(existingIndex, 1);
       chats.unshift(updatedChat);
       this.store.setState('chats', chats);
@@ -220,14 +228,15 @@ export class SocketClient {
   }
 
   /**
-   * Inserts a newly created chat into the sidebar list if not already present.
-   * @param {object} chat
+   * Inserts a newly created chat (converted from ChatDto to ChatModel) into the sidebar list.
+   * @param {object} rawPayload
    */
-  _onChatCreated(chat) {
-    if (!chat || !chat.id) {
+  _onChatCreated(rawPayload) {
+    if (!rawPayload || !rawPayload.id) {
       return;
     }
 
+    const chat = ChatDto.fromPayload(rawPayload).toModel();
     const chats = this.store.state.chats;
     if (chats.some((c) => c.id === chat.id)) {
       return;
@@ -238,14 +247,14 @@ export class SocketClient {
 
   /**
    * Tracks transient typing indicator state for a chat and auto-clears after timeout.
-   * @param {{ chatId: string, userId: string, username: string }} payload
+   * @param {object} rawPayload
    */
-  _onChatTyping(payload) {
-    if (!payload || !payload.chatId || !payload.userId) {
+  _onChatTyping(rawPayload) {
+    if (!rawPayload || !rawPayload.chatId || !rawPayload.userId) {
       return;
     }
 
-    const { chatId, userId, username } = payload;
+    const { chatId, userId, username } = TypingIndicatorDto.fromPayload(rawPayload).toModel();
     const timerKey = `${chatId}:${userId}`;
 
     if (this._typingTimers.has(timerKey)) {

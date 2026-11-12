@@ -1,4 +1,5 @@
 import { formatTime, getInitials } from '../core/formatters.js';
+import { ChatDto, CreateDirectChatRequestDto } from '../dtos/ChatDto.js';
 import {
   MIN_SEARCH_CHARS,
   UserSearchController,
@@ -139,7 +140,9 @@ export class SidebarView {
   async _startDirectChat(targetUserId) {
     this._clearError();
     try {
-      const chat = await this.httpClient.post('/chats/direct', { targetUserId });
+      const requestDto = new CreateDirectChatRequestDto({ targetUserId });
+      const rawChat = await this.httpClient.post('/chats/direct', requestDto);
+      const chat = ChatDto.fromPayload(rawChat).toModel();
       this.searchInputEl.value = '';
       this.searchPanelEl.hidden = true;
       this.store.setState('searchResults', []);
@@ -171,11 +174,9 @@ export class SidebarView {
       return;
     }
 
-    const sortedChats = [...chats].sort((a, b) => {
-      const timeA = a.updatedAt ? new Date(a.updatedAt).getTime() : 0;
-      const timeB = b.updatedAt ? new Date(b.updatedAt).getTime() : 0;
-      return timeB - timeA;
-    });
+    const sortedChats = [...chats].sort(
+      (a, b) => b.getActivityTimestamp() - a.getActivityTimestamp()
+    );
 
     const fragment = document.createDocumentFragment();
 
@@ -187,20 +188,16 @@ export class SidebarView {
         itemEl.classList.add('active');
       }
 
-      const title = chat.displayTitle || chat.title || 'Chat';
+      const title = chat.getResolvedTitle();
       clone.querySelector('.chat-item-avatar').textContent = getInitials(title);
       clone.querySelector('.chat-item-title').textContent = title;
       clone.querySelector('.chat-item-time').textContent = formatTime(
         chat.lastMessage?.createdAt || chat.updatedAt
       );
-      clone.querySelector('.chat-item-preview').textContent = chat.lastMessage?.text
-        ? chat.lastMessage.text
-        : chat.type === 'group'
-          ? 'Group created'
-          : 'No messages yet';
+      clone.querySelector('.chat-item-preview').textContent = chat.getPreviewText();
 
       const badgeEl = clone.querySelector('.chat-item-badge');
-      if (chat.type === 'group') {
+      if (chat.isGroup()) {
         badgeEl.textContent = 'Group';
         badgeEl.hidden = false;
       }
