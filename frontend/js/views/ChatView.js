@@ -1,5 +1,6 @@
 import { formatTime, getInitials } from '../core/formatters.js';
-import { MessageDto, SendMessageRequestDto, TypingEventDto } from '../dtos/MessageDto.js';
+import { MessageModel, SendMessageRequestDto } from '../models/MessageModel.js';
+import { TypingEventDto } from '../models/TypingIndicatorDto.js';
 
 const TYPING_THROTTLE_MS = 1500;
 
@@ -103,7 +104,7 @@ export class ChatView {
         return;
       }
       const messageModels = Array.isArray(rawMessages)
-        ? rawMessages.map((raw) => MessageDto.fromPayload(raw).toModel())
+        ? rawMessages.map((raw) => MessageModel.fromPayload(raw))
         : [];
       this.store.setState('messages', messageModels);
       this.messageInputEl.focus();

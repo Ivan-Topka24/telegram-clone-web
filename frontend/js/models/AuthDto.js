@@ -1,4 +1,4 @@
-import { UserDto } from './UserDto.js';
+import { UserModel } from './UserModel.js';
 
 /**
  * Outgoing request DTO for user login.
@@ -28,15 +28,15 @@ export class RegisterRequestDto {
 }
 
 /**
- * Incoming response DTO for authentication results.
+ * Response DTO representing an authenticated session payload from /auth/login or /auth/register.
  */
 export class AuthResultDto {
   /**
-   * @param {{ token: string, user: UserDto }} params
+   * @param {{ token: string, user: UserModel|object }} params
    */
   constructor({ token, user }) {
-    this.token = token;
-    this.user = user instanceof UserDto ? user : UserDto.fromPayload(user);
+    this.token = token || '';
+    this.user = user instanceof UserModel ? user : UserModel.fromPayload(user || {});
   }
 
   /**
@@ -47,7 +47,7 @@ export class AuthResultDto {
   static fromPayload(payload) {
     return new AuthResultDto({
       token: payload?.token || '',
-      user: UserDto.fromPayload(payload?.user || {}),
+      user: payload?.user || {},
     });
   }
 }

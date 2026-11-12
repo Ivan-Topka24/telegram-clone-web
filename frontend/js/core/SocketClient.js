@@ -1,5 +1,6 @@
-import { ChatDto } from '../dtos/ChatDto.js';
-import { MessageDto, TypingIndicatorDto } from '../dtos/MessageDto.js';
+import { ChatModel } from '../models/ChatModel.js';
+import { MessageModel } from '../models/MessageModel.js';
+import { TypingIndicatorDto } from '../models/TypingIndicatorDto.js';
 
 const INITIAL_RECONNECT_DELAY_MS = 1000;
 const MAX_RECONNECT_DELAY_MS = 10000;
@@ -191,7 +192,7 @@ export class SocketClient {
       return;
     }
 
-    const message = MessageDto.fromPayload(rawPayload).toModel();
+    const message = MessageModel.fromPayload(rawPayload);
     const chats = [...this.store.state.chats];
     const existingIndex = chats.findIndex((c) => c.id === message.chatId);
 
@@ -228,7 +229,7 @@ export class SocketClient {
   }
 
   /**
-   * Inserts a newly created chat (converted from ChatDto to ChatModel) into the sidebar list.
+   * Inserts a newly created chat model into the sidebar list.
    * @param {object} rawPayload
    */
   _onChatCreated(rawPayload) {
@@ -236,7 +237,7 @@ export class SocketClient {
       return;
     }
 
-    const chat = ChatDto.fromPayload(rawPayload).toModel();
+    const chat = ChatModel.fromPayload(rawPayload);
     const chats = this.store.state.chats;
     if (chats.some((c) => c.id === chat.id)) {
       return;
@@ -254,7 +255,7 @@ export class SocketClient {
       return;
     }
 
-    const { chatId, userId, username } = TypingIndicatorDto.fromPayload(rawPayload).toModel();
+    const { chatId, userId, username } = TypingIndicatorDto.fromPayload(rawPayload);
     const timerKey = `${chatId}:${userId}`;
 
     if (this._typingTimers.has(timerKey)) {

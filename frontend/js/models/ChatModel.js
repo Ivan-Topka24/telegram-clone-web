@@ -1,6 +1,31 @@
 import { UserModel } from './UserModel.js';
 
 /**
+ * Outgoing request DTO for creating or fetching a 1-on-1 direct chat.
+ */
+export class CreateDirectChatRequestDto {
+  /**
+   * @param {{ targetUserId: string }} params
+   */
+  constructor({ targetUserId }) {
+    this.targetUserId = targetUserId;
+  }
+}
+
+/**
+ * Outgoing request DTO for creating a multi-user group chat.
+ */
+export class CreateGroupChatRequestDto {
+  /**
+   * @param {{ title: string, memberIds: string[] }} params
+   */
+  constructor({ title, memberIds }) {
+    this.title = title;
+    this.memberIds = Array.isArray(memberIds) ? memberIds : [];
+  }
+}
+
+/**
  * Client-side domain/view model representing a conversation in the UI.
  */
 export class ChatModel {
@@ -29,7 +54,7 @@ export class ChatModel {
     this.type = type;
     this.title = title;
     this.displayTitle = displayTitle;
-    this.peer = peer ? (peer instanceof UserModel ? peer : new UserModel(peer)) : null;
+    this.peer = peer ? (peer instanceof UserModel ? peer : UserModel.fromPayload(peer)) : null;
     this.members = Array.isArray(members) ? members : [];
     this.lastMessage = lastMessage
       ? {
@@ -39,6 +64,24 @@ export class ChatModel {
         }
       : null;
     this.updatedAt = updatedAt ? new Date(updatedAt) : null;
+  }
+
+  /**
+   * Parses a raw API or WebSocket JSON payload into a ChatModel.
+   * @param {object} payload
+   * @returns {ChatModel}
+   */
+  static fromPayload(payload) {
+    return new ChatModel({
+      id: payload?.id ?? null,
+      type: payload?.type || 'direct',
+      title: payload?.title ?? null,
+      displayTitle: payload?.displayTitle ?? null,
+      peer: payload?.peer ? UserModel.fromPayload(payload.peer) : null,
+      members: payload?.members || [],
+      lastMessage: payload?.lastMessage || null,
+      updatedAt: payload?.updatedAt ?? null,
+    });
   }
 
   /**

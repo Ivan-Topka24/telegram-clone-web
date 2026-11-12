@@ -50,16 +50,15 @@ function loadEsmSync(filePath) {
   return exportsObj;
 }
 
-describe('Frontend Core — DTOs, Models, HttpClient, SocketClient & Store', () => {
+describe('Frontend Core — Models, DTOs, HttpClient, SocketClient & Store', () => {
   let Store;
   let HttpClient;
   let SocketClient;
+  let AuthResultDto;
   let UserModel;
   let ChatModel;
   let MessageModel;
-  let UserDto;
-  let ChatDto;
-  let MessageDto;
+  let TypingIndicatorDto;
 
   beforeAll(() => {
     ({ Store } = loadEsmSync(path.resolve(__dirname, '../../../frontend/js/core/Store.js')));
@@ -68,6 +67,9 @@ describe('Frontend Core — DTOs, Models, HttpClient, SocketClient & Store', () 
     ));
     ({ SocketClient } = loadEsmSync(
       path.resolve(__dirname, '../../../frontend/js/core/SocketClient.js')
+    ));
+    ({ AuthResultDto } = loadEsmSync(
+      path.resolve(__dirname, '../../../frontend/js/models/AuthDto.js')
     ));
     ({ UserModel } = loadEsmSync(
       path.resolve(__dirname, '../../../frontend/js/models/UserModel.js')
@@ -78,41 +80,48 @@ describe('Frontend Core — DTOs, Models, HttpClient, SocketClient & Store', () 
     ({ MessageModel } = loadEsmSync(
       path.resolve(__dirname, '../../../frontend/js/models/MessageModel.js')
     ));
-    ({ UserDto } = loadEsmSync(path.resolve(__dirname, '../../../frontend/js/dtos/UserDto.js')));
-    ({ ChatDto } = loadEsmSync(path.resolve(__dirname, '../../../frontend/js/dtos/ChatDto.js')));
-    ({ MessageDto } = loadEsmSync(
-      path.resolve(__dirname, '../../../frontend/js/dtos/MessageDto.js')
+    ({ TypingIndicatorDto } = loadEsmSync(
+      path.resolve(__dirname, '../../../frontend/js/models/TypingIndicatorDto.js')
     ));
   });
 
-  test('Frontend DTOs convert incoming wire payloads into client Models', () => {
-    const userModel = UserDto.fromPayload({
-      id: 'u1',
-      username: 'alice',
-      displayName: 'Alice Smith',
-    }).toModel();
-    expect(userModel).toBeInstanceOf(UserModel);
-    expect(userModel.getInitials()).toBe('AS');
+  test('Frontend models and DTOs parse incoming API payloads via static fromPayload()', () => {
+    const authResult = AuthResultDto.fromPayload({
+      token: 'jwt-abc',
+      user: { id: 'u1', username: 'alice', displayName: 'Alice Smith' },
+    });
+    expect(authResult).toBeInstanceOf(AuthResultDto);
+    expect(authResult.user).toBeInstanceOf(UserModel);
+    expect(authResult.user.getInitials()).toBe('AS');
+    expect(authResult.user.getHandle()).toBe('@alice');
 
-    const chatModel = ChatDto.fromPayload({
+    const chatModel = ChatModel.fromPayload({
       id: 'c1',
       type: 'direct',
       displayTitle: 'Alice Smith',
       peer: { id: 'u1', username: 'alice', displayName: 'Alice Smith' },
-    }).toModel();
+    });
     expect(chatModel).toBeInstanceOf(ChatModel);
     expect(chatModel.peer).toBeInstanceOf(UserModel);
     expect(chatModel.getPreviewText()).toBe('No messages yet');
 
-    const msgModel = MessageDto.fromPayload({
+    const msgModel = MessageModel.fromPayload({
       id: 'm1',
       chatId: 'c1',
       senderId: 'u1',
       senderName: 'Alice Smith',
       text: 'Hello!',
-    }).toModel();
+    });
     expect(msgModel).toBeInstanceOf(MessageModel);
     expect(msgModel.isOwn('u1')).toBe(true);
+
+    const typingDto = TypingIndicatorDto.fromPayload({
+      chatId: 'c1',
+      userId: 'u1',
+      username: 'alice',
+    });
+    expect(typingDto).toBeInstanceOf(TypingIndicatorDto);
+    expect(typingDto.username).toBe('alice');
   });
 
   test('Store.state returns a frozen shallow snapshot preventing direct mutation', () => {

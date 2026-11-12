@@ -1,4 +1,17 @@
 /**
+ * Outgoing WebSocket DTO for sending a chat message.
+ */
+export class SendMessageRequestDto {
+  /**
+   * @param {{ chatId: string, text: string }} params
+   */
+  constructor({ chatId, text }) {
+    this.chatId = chatId;
+    this.text = text;
+  }
+}
+
+/**
  * Client-side domain/view model representing a chat message.
  */
 export class MessageModel {
@@ -18,6 +31,22 @@ export class MessageModel {
     this.senderName = senderName || 'User';
     this.text = text;
     this.createdAt = createdAt ? new Date(createdAt) : null;
+  }
+
+  /**
+   * Parses a raw API or WebSocket JSON payload into a MessageModel.
+   * @param {object} payload
+   * @returns {MessageModel}
+   */
+  static fromPayload(payload) {
+    return new MessageModel({
+      id: payload?.id ?? null,
+      chatId: payload?.chatId || '',
+      senderId: payload?.senderId || '',
+      senderName: payload?.senderName || 'User',
+      text: payload?.text || '',
+      createdAt: payload?.createdAt ?? null,
+    });
   }
 
   /**

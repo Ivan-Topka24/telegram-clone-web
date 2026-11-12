@@ -1,8 +1,8 @@
 import { Store } from './core/Store.js';
 import { HttpClient } from './core/HttpClient.js';
 import { SocketClient } from './core/SocketClient.js';
-import { UserDto } from './dtos/UserDto.js';
-import { ChatDto } from './dtos/ChatDto.js';
+import { UserModel } from './models/UserModel.js';
+import { ChatModel } from './models/ChatModel.js';
 import { AuthView } from './views/AuthView.js';
 import { SidebarView } from './views/SidebarView.js';
 import { ChatView } from './views/ChatView.js';
@@ -30,7 +30,7 @@ async function refreshChats() {
     .get('/chats')
     .then((rawChats) => {
       const chatModels = Array.isArray(rawChats)
-        ? rawChats.map((raw) => ChatDto.fromPayload(raw).toModel())
+        ? rawChats.map((raw) => ChatModel.fromPayload(raw))
         : [];
       store.setState('chats', chatModels);
     })
@@ -99,7 +99,7 @@ async function bootstrap() {
 
   try {
     const rawUser = await httpClient.get('/auth/me');
-    store.setState('currentUser', UserDto.fromPayload(rawUser).toModel());
+    store.setState('currentUser', UserModel.fromPayload(rawUser));
     authView.hide();
     await initializeSession(token);
   } catch (_err) {

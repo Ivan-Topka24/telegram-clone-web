@@ -19,6 +19,20 @@ export class UserModel {
   }
 
   /**
+   * Parses an API JSON payload into a UserModel.
+   * @param {object} payload
+   * @returns {UserModel}
+   */
+  static fromPayload(payload) {
+    return new UserModel({
+      id: payload?.id ?? null,
+      username: payload?.username || '',
+      displayName: payload?.displayName || '',
+      createdAt: payload?.createdAt ?? null,
+    });
+  }
+
+  /**
    * Returns @username handle string.
    * @returns {string}
    */

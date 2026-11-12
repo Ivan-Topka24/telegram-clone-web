@@ -1,5 +1,5 @@
 import { formatTime, getInitials } from '../core/formatters.js';
-import { ChatDto, CreateDirectChatRequestDto } from '../dtos/ChatDto.js';
+import { ChatModel, CreateDirectChatRequestDto } from '../models/ChatModel.js';
 import {
   MIN_SEARCH_CHARS,
   UserSearchController,
@@ -142,7 +142,7 @@ export class SidebarView {
     try {
       const requestDto = new CreateDirectChatRequestDto({ targetUserId });
       const rawChat = await this.httpClient.post('/chats/direct', requestDto);
-      const chat = ChatDto.fromPayload(rawChat).toModel();
+      const chat = ChatModel.fromPayload(rawChat);
       this.searchInputEl.value = '';
       this.searchPanelEl.hidden = true;
       this.store.setState('searchResults', []);

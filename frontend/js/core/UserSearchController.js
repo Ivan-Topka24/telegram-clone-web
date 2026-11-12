@@ -1,5 +1,5 @@
 import { getInitials } from './formatters.js';
-import { UserDto } from '../dtos/UserDto.js';
+import { UserModel } from '../models/UserModel.js';
 
 export const SEARCH_DEBOUNCE_MS = 300;
 export const MIN_SEARCH_CHARS = 2;
@@ -70,7 +70,7 @@ export class UserSearchController {
         return;
       }
       const models = Array.isArray(rawUsers)
-        ? rawUsers.map((raw) => UserDto.fromPayload(raw).toModel())
+        ? rawUsers.map((raw) => UserModel.fromPayload(raw))
         : [];
       this.onResults(models);
     } catch (err) {
