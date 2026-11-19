@@ -20,11 +20,14 @@ This project demonstrates how to build a real-time, full-stack chat application 
    - Top sidebar search bar with a **300ms client-side debounce** querying users by username prefix (minimum 2 characters).
 3. **1-on-1 Direct Chats:**
    - Clicking a user in search results opens an existing direct chat or creates a new one (`POST /api/chats/direct`), resolving each participant's display title to the peer's `displayName` and notifying the recipient in real time (`chat:created`).
+   - Either participant (creator or recipient) can delete a 1-on-1 chat (`DELETE /api/chats/:chatId`), permanently removing the chat and its message history for both users in real time (`chat:deleted`).
 4. **Multi-User Group Chats:**
    - Native `<dialog>` modal allowing users to set a group title, search and select multiple members, and create a group (`POST /api/chats/group`) with the creator assigned as `owner`.
-5. **Real-Time Messaging & Live Presence:**
-   - Atomic message creation + `chat.lastMessage` update via the **Unit of Work** pattern.
+   - Group owners can permanently delete the group and all its messages (`DELETE /api/chats/:chatId`), removing it from all members' sidebars in real time (`chat:deleted`).
+5. **Real-Time Messaging, Deletion, Read Receipts & Live Presence:**
+   - Atomic message creation (`message:send` → `message:new`) and message deletion (`DELETE /api/chats/:chatId/messages/:messageId` or WS `message:delete` → `message:deleted`) with `chat.lastMessage` recalculation via the **Unit of Work** pattern.
    - Instant `message:new` delivery across multiple open browser tabs per user, live sidebar `lastMessage` preview and chat reordering, and throttled `"user is typing..."` (`chat:typing`) indicators.
+   - **Read Receipts (`message:read`):** Tracks `readBy` user IDs per message, automatically marks unread incoming messages as viewed when an active chat tab is visible, and updates sender message checkmarks live (`✓` unviewed, `✓✓` viewed).
 
 ---
 
@@ -71,23 +74,24 @@ The backend follows a **5-layer Clean Architecture** where dependencies point st
 ### Layer Breakdown
 1. **Domain Layer (`backend/domain/`):**
    - Zero external dependencies (`express`, `mongoose`, `ws`, `bcrypt`, `jsonwebtoken` are forbidden here).
-   - **Models:** `User` (with `toPublicProfile()`), `Chat` (with `hasMember(userId)`, `isGroup()`), `Message`.
-   - **Exceptions:** `DomainException` base class extended into `ValidationException` (`400`), `UnauthorizedException` (`401`), `ForbiddenException` (`403`), and `NotFoundException` (`404`).
-   - **Interfaces:** `IUnitOfWork`, `IUserRepository`, `IChatRepository`, `IMessageRepository`, `IRealtimeNotifier`.
-2. **Application Layer (`backend/application/services/`):**
-   - `AuthService`, `UserService`, `ChatService`, and `MessageService` receive all dependencies via **Constructor Dependency Injection** and depend exclusively on `domain/`.
+   - **Models:** `User` (with `toPublicProfile()`), `Chat` (with `hasMember(userId)`, `isGroup()`, `isOwner(userId)`), `Message` (with normalized `readBy` tracking).
+   - **Exceptions:** `DomainException` base class extended into `ValidationException` (`400`), `UnauthorizedException` (`401`), `ForbiddenException` (`403`), `NotFoundException` (`404`), and `ConflictException` (`409`).
+   - **Interfaces:** `IUnitOfWork`, `IUserRepository`, `IChatRepository`, `IMessageRepository`, `IConnectionManager`, `IRealtimeNotifier`.
+2. **Application Layer (`backend/application/`):**
+   - `AuthService`, `UserService`, `ChatService`, `MessageService`, and `PresenceService` receive all dependencies via **Constructor Dependency Injection** and depend exclusively on `domain/`, alongside `dtos/` and `mappers/` (`ChatDtoMapper`, `MessageDtoMapper`).
 3. **Persistence Layer (`backend/persistence/`):**
    - `MongoDbContext`: manages `mongoose.connect()` / `disconnect()` and lifecycle logging.
-   - `UnitOfWork`: wraps multi-document writes (`MessageRepository.create` + `ChatRepository.updateLastMessage`) in a Mongoose transaction, with a graceful fallback if running against a standalone local MongoDB without a replica set.
+   - `UnitOfWork`: wraps multi-document writes (`MessageRepository.create`/`deleteById` + `ChatRepository.updateLastMessage`, and `MessageRepository.deleteByChatId` + `ChatRepository.deleteById`) in a Mongoose transaction via `AsyncLocalStorage`, with a graceful fallback if running against a standalone local MongoDB without a replica set.
    - `schemas/` & `repositories/`: Mongoose schemas with compound indexes (`{ 'members.userId': 1, updatedAt: -1 }`, `{ chatId: 1, createdAt: -1 }`) and repositories that map documents back into clean Domain entities.
 4. **Infrastructure Layer (`backend/infrastructure/`):**
    - `Logger` (structured JSON with ISO timestamps), `PasswordHasher` (`bcrypt`), `JwtProvider` (`jsonwebtoken`), `ConnectionManager` (`Map<userId, Set<WebSocket>>` supporting multiple open tabs per user), and `WsRealtimeNotifier` (implements `IRealtimeNotifier`).
 5. **Presentation Layer (`backend/presentation/`) & Composition Root:**
-   - **HTTP:** `asyncHandler`, `authMiddleware`, `globalExceptionMiddleware`, controllers (`AuthController`, `UserController`, `ChatController`), `/api` router, and static serving of `frontend/`.
+   - **HTTP:** `asyncHandler`, `authMiddleware`, `rateLimitMiddleware`, `securityHeadersMiddleware`, `globalExceptionMiddleware`, controllers (`AuthController`, `UserController`, `ChatController`), `/api` router, and static serving of `frontend/`.
    - **WebSockets:** `WsGatewayController` attached to `/ws` on the shared HTTP server.
    - **Composition Root (`backend/container.js`) & Entry Point (`backend/server.js`):** Instantiates and wires every layer, connects MongoDB, and starts the shared HTTP + WebSocket server.
 6. **Frontend (`frontend/`):**
-   - **Core (`frontend/js/core/`):** `Store.js` (Observer pattern), `HttpClient.js` (`fetch` wrapper + JWT + `auth:unauthorized` event), `SocketClient.js` (native `WebSocket` with exponential-backoff reconnect and store sync), `formatters.js`.
+   - **Core (`frontend/js/core/`):** `Store.js` (Observer pattern), `HttpClient.js` (`fetch` wrapper + JWT + `auth:unauthorized` event), `SocketClient.js` (native `WebSocket` with exponential-backoff reconnect and store sync), `UserSearchController.js`, `formatters.js`.
+   - **Models & DTOs (`frontend/js/models/`):** `AuthDto.js`, `UserModel.js`, `ChatModel.js`, `MessageModel.js`, `TypingIndicatorDto.js`.
    - **Views (`frontend/js/views/`):** `AuthView.js`, `SidebarView.js`, `ChatView.js`, `GroupModalView.js` using `<template>` cloning and `.textContent` for XSS-safe rendering.
 
 ---
@@ -108,7 +112,10 @@ telegram-web-clone/
 │   │   ├── exceptions/
 │   │   ├── interfaces/
 │   │   └── models/
-│   ├── application/services/
+│   ├── application/
+│   │   ├── dtos/
+│   │   ├── mappers/
+│   │   └── services/
 │   ├── persistence/
 │   │   ├── MongoDbContext.js
 │   │   ├── UnitOfWork.js
@@ -121,13 +128,19 @@ telegram-web-clone/
 │   └── presentation/
 │       ├── http/
 │       └── ws/
-└── frontend/
-    ├── index.html
-    ├── css/main.css
-    └── js/
-        ├── main.js
-        ├── core/
-        └── views/
+├── frontend/
+│   ├── index.html
+│   ├── css/main.css
+│   └── js/
+│       ├── main.js
+│       ├── core/
+│       ├── models/
+│       └── views/
+└── tests/
+    ├── setup/
+    ├── unit/
+    ├── integration/
+    └── ws/
 ```
 
 ---
@@ -144,15 +157,22 @@ telegram-web-clone/
 | `GET` | `/api/chats` | Bearer JWT | List user's chats sorted by recent activity |
 | `POST` | `/api/chats/direct` | Bearer JWT | Get or create a 1-on-1 chat (`{ targetUserId }`) |
 | `POST` | `/api/chats/group` | Bearer JWT | Create a group chat (`{ title, memberIds }`) |
+| `DELETE` | `/api/chats/:chatId` | Bearer JWT | Delete a direct chat (either participant) or group chat (owner only) |
 | `GET` | `/api/chats/:chatId/messages` | Bearer JWT | Fetch chronological message history for a chat |
+| `DELETE` | `/api/chats/:chatId/messages/:messageId` | Bearer JWT | Delete your own message and recalculate `chat.lastMessage` |
 
 ### WebSocket Protocol (`/ws?token=<JWT>`)
 - **Client → Server:**
   - `message:send` — `{ chatId, text }`
+  - `message:delete` — `{ chatId, messageId }`
+  - `message:read` — `{ chatId, upToMessageId? }`
   - `chat:typing` — `{ chatId }`
 - **Server → Client:**
-  - `message:new` — `{ id, chatId, senderId, senderName, text, createdAt }`
+  - `message:new` — `{ id, chatId, senderId, senderName, text, readBy, createdAt }`
+  - `message:deleted` — `{ chatId, messageId, lastMessage }`
+  - `message:read` — `{ chatId, readerId, messageIds }`
   - `chat:created` — enriched chat DTO
+  - `chat:deleted` — `{ chatId }`
   - `chat:typing` — `{ chatId, userId, username }`
   - `error` — `{ code, message }` (invalid handshakes close with code `4001`)
 
@@ -192,4 +212,12 @@ telegram-web-clone/
      ```
 
 5. **Open in browser:**
-   Visit **`http://localhost:3000`**. Register two accounts across two browser windows (or an incognito tab) to test user search, direct chats, group chats, typing indicators, and live messaging.
+   Visit **`http://localhost:3000`**. Register two accounts across two browser windows (or an incognito tab) to test user search, direct chats, group chats, typing indicators, live messaging, message read receipts (`✓` / `✓✓`), and message/chat deletion.
+
+6. **Run automated tests:**
+   ```powershell
+   npm test              # Full suite (unit + integration + WebSocket E2E)
+   npm run test:unit     # Unit tests only
+   npm run test:integration
+   npm run test:ws
+   ```
