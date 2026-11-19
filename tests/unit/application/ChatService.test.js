@@ -134,7 +134,7 @@ describe('Application Layer — ChatService', () => {
     );
   });
 
-  test('deleteGroupChat() allows only group owner, deletes messages + chat, and broadcasts chat:deleted', async () => {
+  test('deleteChat() allows group owner or either direct-chat participant, rejects non-members/non-owners, and broadcasts chat:deleted', async () => {
     const groupChat = new Chat({
       id: 'g1',
       type: 'group',
@@ -151,13 +151,24 @@ describe('Application Layer — ChatService', () => {
     });
 
     chatRepository.findById.mockResolvedValue(directChat);
-    await expect(chatService.deleteGroupChat('u1', 'd1')).rejects.toThrow(ValidationException);
+    await expect(chatService.deleteChat('u3', 'd1')).rejects.toThrow(ForbiddenException);
+
+    // Non-creator participant u2 can delete the 1-on-1 direct chat
+    const directRes = await chatService.deleteChat('u2', 'd1');
+    expect(directRes).toEqual({ chatId: 'd1' });
+    expect(messageRepository.deleteByChatId).toHaveBeenCalledWith('d1');
+    expect(chatRepository.deleteById).toHaveBeenCalledWith('d1');
+    expect(realtimeNotifier.notifyUsers).toHaveBeenCalledWith(
+      ['u1', 'u2'],
+      'chat:deleted',
+      { chatId: 'd1' }
+    );
 
     chatRepository.findById.mockResolvedValue(groupChat);
-    await expect(chatService.deleteGroupChat('u2', 'g1')).rejects.toThrow(ForbiddenException);
+    await expect(chatService.deleteChat('u2', 'g1')).rejects.toThrow(ForbiddenException);
 
-    const res = await chatService.deleteGroupChat('u1', 'g1');
-    expect(unitOfWork.execute).toHaveBeenCalledTimes(1);
+    const res = await chatService.deleteChat('u1', 'g1');
+    expect(unitOfWork.execute).toHaveBeenCalledTimes(2);
     expect(messageRepository.deleteByChatId).toHaveBeenCalledWith('g1');
     expect(chatRepository.deleteById).toHaveBeenCalledWith('g1');
     expect(realtimeNotifier.notifyUsers).toHaveBeenCalledWith(

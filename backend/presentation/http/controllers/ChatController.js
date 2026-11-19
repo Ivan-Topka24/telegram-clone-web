@@ -53,9 +53,16 @@ class ChatController {
   /**
    * DELETE /api/chats/:chatId
    */
-  async deleteGroupChat(req, res) {
-    const result = await this.chatService.deleteGroupChat(req.user.id, req.params.chatId);
+  async deleteChat(req, res) {
+    const result = await this.chatService.deleteChat(req.user.id, req.params.chatId);
     res.status(200).json({ success: true, data: result });
+  }
+
+  /**
+   * DELETE /api/chats/:chatId (alias)
+   */
+  async deleteGroupChat(req, res) {
+    return this.deleteChat(req, res);
   }
 
   /**

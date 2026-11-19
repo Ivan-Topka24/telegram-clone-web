@@ -238,6 +238,21 @@ describe('Frontend Core — Models, DTOs, HttpClient, SocketClient & Store', () 
     });
     expect(groupChat.isOwner('u1')).toBe(true);
     expect(groupChat.isOwner('u2')).toBe(false);
+    expect(groupChat.canDelete('u1')).toBe(true);
+    expect(groupChat.canDelete('u2')).toBe(false);
+
+    const directChat = ChatModel.fromPayload({
+      id: 'd1',
+      type: 'direct',
+      displayTitle: 'Bob',
+      members: [
+        { userId: 'u1', role: 'member' },
+        { userId: 'u2', role: 'member' },
+      ],
+    });
+    expect(directChat.canDelete('u1')).toBe(true);
+    expect(directChat.canDelete('u2')).toBe(true);
+    expect(directChat.canDelete('u3')).toBe(false);
 
     const ownMsg = MessageModel.fromPayload({
       id: 'm1',

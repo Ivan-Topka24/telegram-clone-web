@@ -65,7 +65,7 @@ function createApiRouter({
   router.delete(
     '/chats/:chatId',
     authMiddleware,
-    asyncHandler((req, res) => chatController.deleteGroupChat(req, res))
+    asyncHandler((req, res) => chatController.deleteChat(req, res))
   );
   router.delete(
     '/chats/:chatId/messages/:messageId',

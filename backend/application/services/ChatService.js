@@ -201,12 +201,13 @@ class ChatService {
   }
 
   /**
-   * Permanently deletes a group chat and its message history if the requester is the group owner.
+   * Permanently deletes a chat and its message history.
+   * Group chats can only be deleted by their owner; direct chats can be deleted by either participant.
    * @param {string} userId
    * @param {string} chatId
    * @returns {Promise<{ chatId: string }>}
    */
-  async deleteGroupChat(userId, chatId) {
+  async deleteChat(userId, chatId) {
     if (!chatId || typeof chatId !== 'string' || !chatId.trim()) {
       throw new ValidationException('Chat ID is required', 'MISSING_CHAT_ID');
     }
@@ -216,11 +217,11 @@ class ChatService {
       throw new NotFoundException('Chat not found', 'CHAT_NOT_FOUND');
     }
 
-    if (!chat.isGroup()) {
-      throw new ValidationException('Only group chats can be deleted', 'NOT_A_GROUP_CHAT');
+    if (!chat.hasMember(userId)) {
+      throw new ForbiddenException('You are not a member of this chat', 'NOT_CHAT_MEMBER');
     }
 
-    if (!chat.hasMember(userId) || !chat.isOwner(userId)) {
+    if (chat.isGroup() && !chat.isOwner(userId)) {
       throw new ForbiddenException(
         'Only the group owner can delete this group',
         'FORBIDDEN_GROUP_DELETE'
@@ -239,6 +240,16 @@ class ChatService {
     const result = { chatId: chat.id };
     this._safeNotifyUsers(memberIds, 'chat:deleted', result);
     return result;
+  }
+
+  /**
+   * Backwards-compatible alias for deleting a chat.
+   * @param {string} userId
+   * @param {string} chatId
+   * @returns {Promise<{ chatId: string }>}
+   */
+  async deleteGroupChat(userId, chatId) {
+    return this.deleteChat(userId, chatId);
   }
 }
 

@@ -151,11 +151,24 @@ describe('Integration — /api/chats', () => {
     expect(delM1.status).toBe(200);
     expect(delM1.body.data.lastMessage).toBeNull();
 
-    // Direct chat cannot be deleted via group delete endpoint
-    const delDirect = await request(app)
+    // Non-member cannot delete direct chat
+    const carol = await registerUser('carol_del', 'Carol');
+    const carolDeleteDirect = await request(app)
       .delete(`/api/chats/${directChatId}`)
+      .set('Authorization', `Bearer ${carol.token}`);
+    expect(carolDeleteDirect.status).toBe(403);
+
+    // Non-creator participant Bob can delete the 1-on-1 direct chat
+    const bobDeleteDirect = await request(app)
+      .delete(`/api/chats/${directChatId}`)
+      .set('Authorization', `Bearer ${bob.token}`);
+    expect(bobDeleteDirect.status).toBe(200);
+    expect(bobDeleteDirect.body.data.chatId).toBe(directChatId);
+
+    const directHistoryAfterDelete = await request(app)
+      .get(`/api/chats/${directChatId}/messages`)
       .set('Authorization', `Bearer ${alice.token}`);
-    expect(delDirect.status).toBe(400);
+    expect(directHistoryAfterDelete.status).toBe(404);
 
     // Create group chat and send a message
     const groupRes = await request(app)

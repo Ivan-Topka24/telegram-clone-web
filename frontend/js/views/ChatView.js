@@ -168,18 +168,24 @@ export class ChatView {
 
     if (this.deleteGroupBtnEl) {
       const currentUserId = currentUser?.id;
-      const isGroupOwner =
-        chat.type === 'group' &&
-        (typeof chat.isOwner === 'function'
-          ? chat.isOwner(currentUserId)
+      const canDeleteChat =
+        typeof chat.canDelete === 'function'
+          ? chat.canDelete(currentUserId)
           : Boolean(
               currentUserId &&
-                Array.isArray(chat.members) &&
-                chat.members.some(
-                  (m) => String(m.userId) === String(currentUserId) && m.role === 'owner'
-                )
-            ));
-      this.deleteGroupBtnEl.hidden = !isGroupOwner;
+                (chat.type === 'group'
+                  ? Array.isArray(chat.members) &&
+                    chat.members.some(
+                      (m) => String(m.userId) === String(currentUserId) && m.role === 'owner'
+                    )
+                  : !Array.isArray(chat.members) ||
+                    chat.members.length === 0 ||
+                    chat.members.some((m) => String(m.userId) === String(currentUserId)))
+            );
+      this.deleteGroupBtnEl.hidden = !canDeleteChat;
+      this.deleteGroupBtnEl.textContent = chat.type === 'group' ? 'Delete Group' : 'Delete Chat';
+      this.deleteGroupBtnEl.title =
+        chat.type === 'group' ? 'Delete this group chat' : 'Delete this chat';
     }
   }
 
@@ -401,7 +407,7 @@ export class ChatView {
         this.store.setState('activeChatId', null);
       }
     } catch (err) {
-      this._showError(err?.message || 'Failed to delete group chat.');
+      this._showError(err?.message || 'Failed to delete chat.');
     } finally {
       if (this.deleteGroupBtnEl) {
         this.deleteGroupBtnEl.disabled = false;

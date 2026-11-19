@@ -107,6 +107,25 @@ export class ChatModel {
   }
 
   /**
+   * Returns true if userId can delete this chat (group owner for groups, either member for direct chats).
+   * @param {string|null|undefined} userId
+   * @returns {boolean}
+   */
+  canDelete(userId) {
+    if (!userId) {
+      return false;
+    }
+    if (this.isGroup()) {
+      return this.isOwner(userId);
+    }
+    const targetId = String(userId);
+    return (
+      this.members.length === 0 ||
+      this.members.some((member) => String(member.userId) === targetId)
+    );
+  }
+
+  /**
    * @returns {string}
    */
   getResolvedTitle() {
