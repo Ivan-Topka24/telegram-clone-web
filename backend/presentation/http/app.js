@@ -19,7 +19,7 @@ function createApp({ apiRouter, globalExceptionMiddleware, corsOrigin = null }) 
   if (corsOrigin) {
     app.use((req, res, next) => {
       res.setHeader('Access-Control-Allow-Origin', corsOrigin);
-      res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
+      res.setHeader('Access-Control-Allow-Methods', 'GET,POST,DELETE,OPTIONS');
       res.setHeader('Access-Control-Allow-Headers', 'Authorization,Content-Type');
       if (req.method === 'OPTIONS') {
         return res.sendStatus(204);

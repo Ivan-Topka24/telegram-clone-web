@@ -17,6 +17,7 @@ class MessageDtoMapper {
       senderId: message.senderId,
       senderName: sender ? sender.displayName : 'Deleted User',
       text: message.text,
+      readBy: Array.isArray(message.readBy) ? message.readBy : [],
       createdAt: message.createdAt,
     });
   }

@@ -149,19 +149,128 @@ class MessageService {
     const messageDto = this.messageDtoMapper.toDto(message, sender);
 
     const memberIds = chat.members.map((member) => String(member.userId));
+    this._safeNotifyUsers(memberIds, 'message:new', messageDto, {
+      chatId: chat.id,
+      messageId: message.id,
+    });
+
+    return messageDto;
+  }
+
+  /**
+   * Dispatches real-time notifications safely without failing already-persisted operations.
+   * @param {string[]} userIds
+   * @param {string} event
+   * @param {any} payload
+   * @param {object} [context={}]
+   */
+  _safeNotifyUsers(userIds, event, payload, context = {}) {
     try {
-      this.realtimeNotifier.notifyUsers(memberIds, 'message:new', messageDto);
+      this.realtimeNotifier.notifyUsers(userIds, event, payload);
     } catch (err) {
       if (this.logger && typeof this.logger.warn === 'function') {
-        this.logger.warn('Failed to broadcast new message notification', {
-          chatId: chat.id,
-          messageId: message.id,
+        this.logger.warn(`Failed to broadcast ${event} notification`, {
+          ...context,
           err,
         });
       }
     }
+  }
 
-    return messageDto;
+  /**
+   * Deletes a message authored by the requesting user, recalculates chat.lastMessage, and broadcasts message:deleted.
+   * @param {{ userId: string, chatId: string, messageId: string }} input
+   * @returns {Promise<{ chatId: string, messageId: string, lastMessage: object|null }>}
+   */
+  async deleteMessage(input = {}) {
+    const { userId, chatId, messageId } = input && typeof input === 'object' ? input : {};
+    if (!messageId || typeof messageId !== 'string' || !messageId.trim()) {
+      throw new ValidationException('Message ID is required', 'MISSING_MESSAGE_ID');
+    }
+
+    const chat = await this._requireChatMember(userId, chatId);
+    const message = await this.messageRepository.findById(messageId.trim());
+    if (!message || String(message.chatId) !== String(chat.id)) {
+      throw new NotFoundException('Message not found', 'MESSAGE_NOT_FOUND');
+    }
+
+    if (String(message.senderId) !== String(userId)) {
+      throw new ForbiddenException(
+        'You can only delete your own messages',
+        'FORBIDDEN_MESSAGE_DELETE'
+      );
+    }
+
+    const lastMessage = await this.unitOfWork.execute(async () => {
+      await this.messageRepository.deleteById(message.id);
+      const latest = this.messageRepository.findLatestByChatId
+        ? await this.messageRepository.findLatestByChatId(chat.id)
+        : null;
+      const nextLastMessage = latest
+        ? {
+            text: latest.text,
+            senderId: latest.senderId,
+            createdAt: latest.createdAt,
+          }
+        : null;
+      await this.chatRepository.updateLastMessage(chat.id, nextLastMessage);
+      return nextLastMessage;
+    });
+
+    const result = {
+      chatId: chat.id,
+      messageId: message.id,
+      lastMessage,
+    };
+
+    const memberIds = chat.members.map((member) => String(member.userId));
+    this._safeNotifyUsers(memberIds, 'message:deleted', result, {
+      chatId: chat.id,
+      messageId: message.id,
+    });
+
+    return result;
+  }
+
+  /**
+   * Marks unread messages from other participants in a chat as read by userId and broadcasts message:read.
+   * @param {{ userId: string, chatId: string, upToMessageId?: string|null }} input
+   * @returns {Promise<{ chatId: string, readerId: string, messageIds: string[] }>}
+   */
+  async markMessagesAsRead(input = {}) {
+    const { userId, chatId, upToMessageId = null } = input && typeof input === 'object' ? input : {};
+    const chat = await this._requireChatMember(userId, chatId);
+
+    let upToDate = null;
+    if (upToMessageId && typeof upToMessageId === 'string' && this.messageRepository.findById) {
+      const targetMessage = await this.messageRepository.findById(upToMessageId.trim());
+      if (targetMessage && String(targetMessage.chatId) === String(chat.id)) {
+        upToDate = targetMessage.createdAt;
+      }
+    }
+
+    const readerId = String(userId);
+    const messageIds = await this.messageRepository.markAsReadByUser({
+      chatId: chat.id,
+      readerId,
+      upToDate,
+    });
+
+    const result = {
+      chatId: chat.id,
+      readerId,
+      messageIds,
+    };
+
+    if (messageIds.length > 0) {
+      const memberIds = chat.members.map((member) => String(member.userId));
+      this._safeNotifyUsers(memberIds, 'message:read', result, {
+        chatId: chat.id,
+        readerId,
+      });
+    }
+
+    return result;
   }
 }
 

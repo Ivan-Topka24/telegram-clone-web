@@ -54,15 +54,19 @@ describe('Domain Layer — Models & Exceptions', () => {
     expect(groupChat.hasMember('u1')).toBe(true);
     expect(groupChat.hasMember('u3')).toBe(true);
     expect(groupChat.hasMember('u2')).toBe(false);
+    expect(groupChat.isOwner('u1')).toBe(true);
+    expect(groupChat.isOwner('u3')).toBe(false);
+    expect(directChat.isOwner('u1')).toBe(false);
   });
 
-  test('Message stores normalized identifiers and text', () => {
+  test('Message stores normalized identifiers, text, and deduplicated readBy list', () => {
     const now = new Date();
     const msg = new Message({
       id: 'm1',
       chatId: 'c1',
       senderId: 'u1',
       text: 'Hello',
+      readBy: ['u2', 'u2', null, 'u3'],
       createdAt: now,
     });
 
@@ -70,6 +74,7 @@ describe('Domain Layer — Models & Exceptions', () => {
     expect(msg.chatId).toBe('c1');
     expect(msg.senderId).toBe('u1');
     expect(msg.text).toBe('Hello');
+    expect(msg.readBy).toEqual(['u2', 'u3']);
     expect(msg.createdAt).toEqual(now);
   });
 

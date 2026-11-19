@@ -1,5 +1,6 @@
 const {
   ValidationException,
+  ForbiddenException,
   NotFoundException,
 } = require('../../domain/exceptions');
 const ChatDtoMapper = require('../mappers/ChatDtoMapper');
@@ -7,7 +8,7 @@ const ChatDtoMapper = require('../mappers/ChatDtoMapper');
 const MAX_GROUP_TITLE_LENGTH = 100;
 
 /**
- * Handles direct and group chat retrieval and creation use cases.
+ * Handles direct and group chat retrieval, creation, and deletion use cases.
  */
 class ChatService {
   /**
@@ -15,6 +16,8 @@ class ChatService {
    * @param {import('../../domain/interfaces/IChatRepository')} deps.chatRepository
    * @param {import('../../domain/interfaces/IUserRepository')} deps.userRepository
    * @param {import('../../domain/interfaces/IRealtimeNotifier')} deps.realtimeNotifier
+   * @param {import('../../domain/interfaces/IUnitOfWork')|null} [deps.unitOfWork]
+   * @param {import('../../domain/interfaces/IMessageRepository')|null} [deps.messageRepository]
    * @param {ChatDtoMapper} [deps.chatDtoMapper]
    * @param {{ warn: Function }} [deps.logger]
    */
@@ -22,12 +25,16 @@ class ChatService {
     chatRepository,
     userRepository,
     realtimeNotifier,
+    unitOfWork = null,
+    messageRepository = null,
     chatDtoMapper = new ChatDtoMapper(),
     logger = null,
   }) {
     this.chatRepository = chatRepository;
     this.userRepository = userRepository;
     this.realtimeNotifier = realtimeNotifier;
+    this.unitOfWork = unitOfWork || { execute: async (work) => work() };
+    this.messageRepository = messageRepository;
     this.chatDtoMapper = chatDtoMapper;
     this.logger = logger;
   }
@@ -191,6 +198,47 @@ class ChatService {
     this._safeNotifyUsers(allMemberIds, 'chat:created', chatDto);
 
     return chatDto;
+  }
+
+  /**
+   * Permanently deletes a group chat and its message history if the requester is the group owner.
+   * @param {string} userId
+   * @param {string} chatId
+   * @returns {Promise<{ chatId: string }>}
+   */
+  async deleteGroupChat(userId, chatId) {
+    if (!chatId || typeof chatId !== 'string' || !chatId.trim()) {
+      throw new ValidationException('Chat ID is required', 'MISSING_CHAT_ID');
+    }
+
+    const chat = await this.chatRepository.findById(chatId.trim());
+    if (!chat) {
+      throw new NotFoundException('Chat not found', 'CHAT_NOT_FOUND');
+    }
+
+    if (!chat.isGroup()) {
+      throw new ValidationException('Only group chats can be deleted', 'NOT_A_GROUP_CHAT');
+    }
+
+    if (!chat.hasMember(userId) || !chat.isOwner(userId)) {
+      throw new ForbiddenException(
+        'Only the group owner can delete this group',
+        'FORBIDDEN_GROUP_DELETE'
+      );
+    }
+
+    const memberIds = chat.members.map((member) => String(member.userId));
+
+    await this.unitOfWork.execute(async () => {
+      if (this.messageRepository && typeof this.messageRepository.deleteByChatId === 'function') {
+        await this.messageRepository.deleteByChatId(chat.id);
+      }
+      await this.chatRepository.deleteById(chat.id);
+    });
+
+    const result = { chatId: chat.id };
+    this._safeNotifyUsers(memberIds, 'chat:deleted', result);
+    return result;
   }
 }
 

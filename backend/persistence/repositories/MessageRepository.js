@@ -42,6 +42,7 @@ class MessageRepository extends IMessageRepository {
       chatId: doc.chatId.toString(),
       senderId: doc.senderId.toString(),
       text: doc.text,
+      readBy: Array.isArray(doc.readBy) ? doc.readBy.map((id) => id.toString()) : [],
       createdAt: doc.createdAt,
     });
   }
@@ -88,6 +89,132 @@ class MessageRepository extends IMessageRepository {
       .exec();
 
     return docs.reverse().map((doc) => this._toDomain(doc));
+  }
+
+  /**
+   * Finds a message by its unique identifier.
+   * @param {string} messageId
+   * @returns {Promise<Message|null>}
+   */
+  async findById(messageId) {
+    if (!messageId || !mongoose.Types.ObjectId.isValid(messageId)) {
+      return null;
+    }
+
+    const activeSession = this._resolveSession(null);
+    const query = MessageModel.findById(messageId);
+    if (activeSession) {
+      query.session(activeSession);
+    }
+
+    const doc = await query.lean().exec();
+    return this._toDomain(doc);
+  }
+
+  /**
+   * Finds the most recent message in a chat.
+   * @param {string} chatId
+   * @param {import('mongoose').ClientSession|null} [session=null]
+   * @returns {Promise<Message|null>}
+   */
+  async findLatestByChatId(chatId, session = null) {
+    if (!chatId || !mongoose.Types.ObjectId.isValid(chatId)) {
+      return null;
+    }
+
+    const activeSession = this._resolveSession(session);
+    const query = MessageModel.findOne({ chatId }).sort({ createdAt: -1, _id: -1 });
+    if (activeSession) {
+      query.session(activeSession);
+    }
+
+    const doc = await query.lean().exec();
+    return this._toDomain(doc);
+  }
+
+  /**
+   * Deletes a single message by its unique identifier.
+   * @param {string} messageId
+   * @param {import('mongoose').ClientSession|null} [session=null]
+   * @returns {Promise<boolean>}
+   */
+  async deleteById(messageId, session = null) {
+    if (!messageId || !mongoose.Types.ObjectId.isValid(messageId)) {
+      return false;
+    }
+
+    const activeSession = this._resolveSession(session);
+    const options = activeSession ? { session: activeSession } : {};
+    const res = await MessageModel.deleteOne({ _id: messageId }, options).exec();
+    return res.deletedCount > 0;
+  }
+
+  /**
+   * Deletes all messages belonging to a chat.
+   * @param {string} chatId
+   * @param {import('mongoose').ClientSession|null} [session=null]
+   * @returns {Promise<number>}
+   */
+  async deleteByChatId(chatId, session = null) {
+    if (!chatId || !mongoose.Types.ObjectId.isValid(chatId)) {
+      return 0;
+    }
+
+    const activeSession = this._resolveSession(session);
+    const options = activeSession ? { session: activeSession } : {};
+    const res = await MessageModel.deleteMany({ chatId }, options).exec();
+    return res.deletedCount || 0;
+  }
+
+  /**
+   * Marks unread messages from other users in a chat as read by readerId.
+   * @param {{ chatId: string, readerId: string, upToDate?: Date|string|null }} params
+   * @param {import('mongoose').ClientSession|null} [session=null]
+   * @returns {Promise<string[]>}
+   */
+  async markAsReadByUser({ chatId, readerId, upToDate = null }, session = null) {
+    if (
+      !chatId ||
+      !readerId ||
+      !mongoose.Types.ObjectId.isValid(chatId) ||
+      !mongoose.Types.ObjectId.isValid(readerId)
+    ) {
+      return [];
+    }
+
+    const filter = {
+      chatId,
+      senderId: { $ne: readerId },
+      readBy: { $ne: readerId },
+    };
+
+    if (upToDate) {
+      const parsedDate = new Date(upToDate);
+      if (!Number.isNaN(parsedDate.getTime())) {
+        filter.createdAt = { $lte: parsedDate };
+      }
+    }
+
+    const activeSession = this._resolveSession(session);
+    const findQuery = MessageModel.find(filter).select('_id');
+    if (activeSession) {
+      findQuery.session(activeSession);
+    }
+
+    const unreadDocs = await findQuery.lean().exec();
+    if (unreadDocs.length === 0) {
+      return [];
+    }
+
+    const unreadIds = unreadDocs.map((doc) => doc._id);
+    const options = activeSession ? { session: activeSession } : {};
+    await MessageModel.updateMany(
+      { _id: { $in: unreadIds }, readBy: { $ne: readerId } },
+      { $addToSet: { readBy: readerId } },
+      options
+    ).exec();
+
+    return unreadIds.map((id) => id.toString());
   }
 }
 

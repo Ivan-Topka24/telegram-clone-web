@@ -1,11 +1,15 @@
 import { formatTime, getInitials } from '../core/formatters.js';
-import { MessageModel, SendMessageRequestDto } from '../models/MessageModel.js';
+import {
+  MarkReadEventDto,
+  MessageModel,
+  SendMessageRequestDto,
+} from '../models/MessageModel.js';
 import { TypingEventDto } from '../models/TypingIndicatorDto.js';
 
 const TYPING_THROTTLE_MS = 1500;
 
 /**
- * Manages the active conversation panel, message history, sending, and typing indicators.
+ * Manages the active conversation panel, message history, sending, deletion, read receipts, and typing indicators.
  */
 export class ChatView {
   /**
@@ -22,12 +26,14 @@ export class ChatView {
     this._activeLoadToken = 0;
     this._renderedChatId = null;
     this._renderedMessageIds = [];
+    this._lastReadSentForMessageId = null;
 
     this.emptyStateEl = document.getElementById('empty-chat-state');
     this.activeContainerEl = document.getElementById('active-chat-container');
     this.headerAvatarEl = document.getElementById('chat-header-avatar');
     this.headerTitleEl = document.getElementById('chat-header-title');
     this.headerSubtitleEl = document.getElementById('chat-header-subtitle');
+    this.deleteGroupBtnEl = document.getElementById('delete-group-btn');
     this.typingIndicatorEl = document.getElementById('typing-indicator');
     this.messageListEl = document.getElementById('message-list');
     this.errorEl = document.getElementById('chat-error');
@@ -42,6 +48,12 @@ export class ChatView {
   _bindEvents() {
     this.messageFormEl.addEventListener('submit', (event) => this._handleSendMessage(event));
     this.messageInputEl.addEventListener('input', () => this._handleTyping());
+    this.deleteGroupBtnEl?.addEventListener('click', () => this._handleDeleteGroup());
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') {
+        this._notifyMessagesRead();
+      }
+    });
     window.addEventListener('socket:error', (event) => {
       const message = event?.detail?.message || 'Failed to send message.';
       this._showError(message);
@@ -53,6 +65,7 @@ export class ChatView {
     this.store.subscribe('messages', (messages) => this._renderMessages(messages));
     this.store.subscribe('typingUsers', () => this._renderTypingIndicator());
     this.store.subscribe('chats', () => this._renderHeader());
+    this.store.subscribe('currentUser', () => this._renderHeader());
   }
 
   _showError(message) {
@@ -77,11 +90,15 @@ export class ChatView {
    */
   async _onActiveChatChanged(chatId) {
     this._lastTypingSentAt = 0;
+    this._lastReadSentForMessageId = null;
     this._clearError();
 
     if (!chatId) {
       this._renderedChatId = null;
       this._renderedMessageIds = [];
+      if (this.deleteGroupBtnEl) {
+        this.deleteGroupBtnEl.hidden = true;
+      }
       this.activeContainerEl.hidden = true;
       this.emptyStateEl.hidden = false;
       this.store.setState('messages', []);
@@ -117,16 +134,22 @@ export class ChatView {
   }
 
   /**
-   * Updates the chat header title, avatar, and member/username subtitle.
+   * Updates the chat header title, avatar, member/username subtitle, and owner Delete Group button.
    */
   _renderHeader() {
-    const { activeChatId, chats } = this.store.state;
+    const { activeChatId, chats, currentUser } = this.store.state;
     if (!activeChatId) {
+      if (this.deleteGroupBtnEl) {
+        this.deleteGroupBtnEl.hidden = true;
+      }
       return;
     }
 
     const chat = chats.find((c) => c.id === activeChatId);
     if (!chat) {
+      if (this.deleteGroupBtnEl) {
+        this.deleteGroupBtnEl.hidden = true;
+      }
       return;
     }
 
@@ -141,6 +164,22 @@ export class ChatView {
       this.headerSubtitleEl.textContent = `@${chat.peer.username}`;
     } else {
       this.headerSubtitleEl.textContent = 'Direct chat';
+    }
+
+    if (this.deleteGroupBtnEl) {
+      const currentUserId = currentUser?.id;
+      const isGroupOwner =
+        chat.type === 'group' &&
+        (typeof chat.isOwner === 'function'
+          ? chat.isOwner(currentUserId)
+          : Boolean(
+              currentUserId &&
+                Array.isArray(chat.members) &&
+                chat.members.some(
+                  (m) => String(m.userId) === String(currentUserId) && m.role === 'owner'
+                )
+            ));
+      this.deleteGroupBtnEl.hidden = !isGroupOwner;
     }
   }
 
@@ -173,6 +212,28 @@ export class ChatView {
   }
 
   /**
+   * Applies viewed / unviewed checkmarks to an own message status element.
+   * @param {HTMLElement|null} statusEl
+   * @param {object} msg
+   */
+  _applyMessageReadStatus(statusEl, msg) {
+    if (!statusEl) {
+      return;
+    }
+    const viewed =
+      typeof msg.isViewed === 'function'
+        ? msg.isViewed()
+        : Array.isArray(msg.readBy) &&
+          msg.readBy.some((id) => String(id) !== String(msg.senderId));
+
+    statusEl.hidden = false;
+    statusEl.textContent = viewed ? '\u2713\u2713' : '\u2713';
+    statusEl.classList.toggle('seen', viewed);
+    statusEl.title = viewed ? 'Viewed' : 'Sent (not viewed yet)';
+    statusEl.setAttribute('aria-label', viewed ? 'Viewed' : 'Sent, not viewed yet');
+  }
+
+  /**
    * Creates a DOM node for a single message using #message-item-template.
    * @param {object} msg
    * @param {string|undefined} currentUserId
@@ -181,9 +242,10 @@ export class ChatView {
   _buildMessageNode(msg, currentUserId) {
     const clone = this.messageTemplate.content.cloneNode(true);
     const rowEl = clone.querySelector('.message-row');
-    const isOwn = typeof msg.isOwn === 'function'
-      ? msg.isOwn(currentUserId)
-      : Boolean(currentUserId && msg.senderId === currentUserId);
+    const isOwn =
+      typeof msg.isOwn === 'function'
+        ? msg.isOwn(currentUserId)
+        : Boolean(currentUserId && msg.senderId === currentUserId);
     rowEl.classList.add(isOwn ? 'own' : 'incoming');
     rowEl.dataset.messageId = msg.id || '';
 
@@ -191,11 +253,20 @@ export class ChatView {
     clone.querySelector('.message-text').textContent = msg.text;
     clone.querySelector('.message-time').textContent = formatTime(msg.createdAt);
 
+    if (isOwn && msg.id) {
+      const deleteBtnEl = clone.querySelector('.message-delete-btn');
+      if (deleteBtnEl) {
+        deleteBtnEl.hidden = false;
+        deleteBtnEl.addEventListener('click', () => this._handleDeleteMessage(msg.id));
+      }
+      this._applyMessageReadStatus(clone.querySelector('.message-status'), msg);
+    }
+
     return clone;
   }
 
   /**
-   * Incrementally appends new messages or performs full render when chat/list changes.
+   * Incrementally appends new messages, updates read statuses in-place, or re-renders when list changes.
    * @param {Array<object>} messages
    */
   _renderMessages(messages) {
@@ -205,6 +276,35 @@ export class ChatView {
     if (!Array.isArray(messages) || messages.length === 0) {
       this.messageListEl.replaceChildren();
       this._renderedMessageIds = [];
+      return;
+    }
+
+    const isSameMessageList =
+      this._renderedChatId === activeChatId &&
+      this._renderedMessageIds.length === messages.length &&
+      this._renderedMessageIds.every((id, idx) => messages[idx]?.id === id);
+
+    if (isSameMessageList) {
+      const rowsById = new Map();
+      for (const rowEl of this.messageListEl.querySelectorAll('.message-row')) {
+        if (rowEl.dataset.messageId) {
+          rowsById.set(rowEl.dataset.messageId, rowEl);
+        }
+      }
+
+      for (const msg of messages) {
+        const isOwn =
+          typeof msg.isOwn === 'function'
+            ? msg.isOwn(currentUserId)
+            : Boolean(currentUserId && msg.senderId === currentUserId);
+        if (isOwn && msg.id) {
+          const rowEl = rowsById.get(msg.id);
+          const statusEl = rowEl ? rowEl.querySelector('.message-status') : null;
+          this._applyMessageReadStatus(statusEl, msg);
+        }
+      }
+
+      this._notifyMessagesRead();
       return;
     }
 
@@ -230,6 +330,119 @@ export class ChatView {
     this._renderedChatId = activeChatId;
     this.messageListEl.appendChild(fragment);
     this.messageListEl.scrollTop = this.messageListEl.scrollHeight;
+    this._notifyMessagesRead();
+  }
+
+  /**
+   * Emits message:read when the visible active chat contains unread incoming messages.
+   */
+  _notifyMessagesRead() {
+    const { activeChatId, messages, currentUser } = this.store.state;
+    if (!activeChatId || !currentUser?.id || !Array.isArray(messages) || messages.length === 0) {
+      return;
+    }
+    if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
+      return;
+    }
+
+    const currentUserId = String(currentUser.id);
+    const unreadIncoming = messages.filter((msg) => {
+      const isOwn =
+        typeof msg.isOwn === 'function'
+          ? msg.isOwn(currentUserId)
+          : String(msg.senderId) === currentUserId;
+      if (isOwn) {
+        return false;
+      }
+      const alreadyRead =
+        typeof msg.isViewedBy === 'function'
+          ? msg.isViewedBy(currentUserId)
+          : Array.isArray(msg.readBy) && msg.readBy.includes(currentUserId);
+      return !alreadyRead;
+    });
+
+    if (unreadIncoming.length === 0) {
+      return;
+    }
+
+    const latestUnread = unreadIncoming[unreadIncoming.length - 1];
+    if (!latestUnread?.id || this._lastReadSentForMessageId === latestUnread.id) {
+      return;
+    }
+
+    const sent = this.socketClient.send(
+      'message:read',
+      new MarkReadEventDto({ chatId: activeChatId, upToMessageId: latestUnread.id })
+    );
+    if (sent) {
+      this._lastReadSentForMessageId = latestUnread.id;
+    }
+  }
+
+  /**
+   * Deletes the currently active group chat (owner only).
+   */
+  async _handleDeleteGroup() {
+    const activeChatId = this.store.state.activeChatId;
+    if (!activeChatId) {
+      return;
+    }
+
+    this._clearError();
+    if (this.deleteGroupBtnEl) {
+      this.deleteGroupBtnEl.disabled = true;
+    }
+
+    try {
+      await this.httpClient.delete(`/chats/${encodeURIComponent(activeChatId)}`);
+      const nextChats = this.store.state.chats.filter((c) => c.id !== activeChatId);
+      this.store.setState('chats', nextChats);
+      if (this.store.state.activeChatId === activeChatId) {
+        this.store.setState('activeChatId', null);
+      }
+    } catch (err) {
+      this._showError(err?.message || 'Failed to delete group chat.');
+    } finally {
+      if (this.deleteGroupBtnEl) {
+        this.deleteGroupBtnEl.disabled = false;
+      }
+    }
+  }
+
+  /**
+   * Deletes one of the current user's own messages from the active chat.
+   * @param {string} messageId
+   */
+  async _handleDeleteMessage(messageId) {
+    const activeChatId = this.store.state.activeChatId;
+    if (!activeChatId || !messageId) {
+      return;
+    }
+
+    this._clearError();
+    try {
+      const result = await this.httpClient.delete(
+        `/chats/${encodeURIComponent(activeChatId)}/messages/${encodeURIComponent(messageId)}`
+      );
+      const nextMessages = this.store.state.messages.filter((m) => m.id !== messageId);
+      if (nextMessages.length !== this.store.state.messages.length) {
+        this.store.setState('messages', nextMessages);
+      }
+      if (result && 'lastMessage' in result) {
+        const chats = [...this.store.state.chats];
+        const idx = chats.findIndex((c) => c.id === activeChatId);
+        if (idx !== -1) {
+          const chat = chats[idx];
+          chats[idx] =
+            typeof chat.withLastMessage === 'function'
+              ? chat.withLastMessage(result.lastMessage)
+              : { ...chat, lastMessage: result.lastMessage };
+          this.store.setState('chats', chats);
+        }
+      }
+    } catch (err) {
+      this._showError(err?.message || 'Failed to delete message.');
+    }
   }
 
   /**

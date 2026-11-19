@@ -208,4 +208,79 @@ describe('Frontend Core — Models, DTOs, HttpClient, SocketClient & Store', () 
       expect.objectContaining({ chatId: 'unknown-chat' })
     );
   });
+
+  test('HttpClient.delete(), MessageModel read receipts, ChatModel.isOwner(), and SocketClient deletion/read events', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ success: true, data: { chatId: 'g1' } }),
+    });
+    const client = new HttpClient('/api', {
+      tokenStorage: { getItem: () => 'jwt-1', setItem: () => {}, removeItem: () => {} },
+      onUnauthorized: () => {},
+      fetchImpl,
+    });
+    const deleteRes = await client.delete('/chats/g1');
+    expect(deleteRes).toEqual({ chatId: 'g1' });
+    expect(fetchImpl).toHaveBeenCalledWith(
+      '/api/chats/g1',
+      expect.objectContaining({ method: 'DELETE' })
+    );
+
+    const groupChat = ChatModel.fromPayload({
+      id: 'g1',
+      type: 'group',
+      title: 'Team',
+      members: [
+        { userId: 'u1', role: 'owner' },
+        { userId: 'u2', role: 'member' },
+      ],
+    });
+    expect(groupChat.isOwner('u1')).toBe(true);
+    expect(groupChat.isOwner('u2')).toBe(false);
+
+    const ownMsg = MessageModel.fromPayload({
+      id: 'm1',
+      chatId: 'g1',
+      senderId: 'u1',
+      text: 'Status check',
+      readBy: [],
+    });
+    expect(ownMsg.isViewed()).toBe(false);
+    expect(ownMsg.withReader('u2').isViewed()).toBe(true);
+    expect(ownMsg.withReader('u2').isViewedBy('u2')).toBe(true);
+
+    const store = new Store();
+    store.setState('chats', [groupChat]);
+    store.setState('activeChatId', 'g1');
+    store.setState('messages', [ownMsg]);
+
+    const socketClient = new SocketClient(store, { eventTarget: null });
+
+    socketClient._handleMessage(
+      JSON.stringify({
+        event: 'message:read',
+        payload: { chatId: 'g1', readerId: 'u2', messageIds: ['m1'] },
+      })
+    );
+    expect(store.state.messages[0].isViewed()).toBe(true);
+
+    socketClient._handleMessage(
+      JSON.stringify({
+        event: 'message:deleted',
+        payload: { chatId: 'g1', messageId: 'm1', lastMessage: null },
+      })
+    );
+    expect(store.state.messages).toHaveLength(0);
+    expect(store.state.chats[0].lastMessage).toBeNull();
+
+    socketClient._handleMessage(
+      JSON.stringify({
+        event: 'chat:deleted',
+        payload: { chatId: 'g1' },
+      })
+    );
+    expect(store.state.chats).toHaveLength(0);
+    expect(store.state.activeChatId).toBeNull();
+  });
 });

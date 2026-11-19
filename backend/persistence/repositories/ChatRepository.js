@@ -185,9 +185,9 @@ class ChatRepository extends IChatRepository {
   }
 
   /**
-   * Atomically updates a chat's lastMessage snapshot and updatedAt timestamp.
+   * Atomically updates a chat's lastMessage snapshot and updatedAt timestamp, or clears lastMessage when null.
    * @param {string} chatId
-   * @param {{ text: string, senderId: string, createdAt: Date }} lastMessage
+   * @param {{ text: string, senderId: string, createdAt: Date }|null} lastMessage
    * @param {import('mongoose').ClientSession|null} [session=null]
    * @returns {Promise<Chat|null>}
    */
@@ -196,7 +196,6 @@ class ChatRepository extends IChatRepository {
       return null;
     }
 
-    const updatedAt = lastMessage.createdAt ? new Date(lastMessage.createdAt) : new Date();
     const activeSession = this._resolveSession(session);
     const options = {
       new: true,
@@ -204,22 +203,45 @@ class ChatRepository extends IChatRepository {
       ...(activeSession ? { session: activeSession } : {}),
     };
 
+    let updateFields;
+    if (lastMessage === null) {
+      updateFields = { lastMessage: null };
+    } else {
+      const updatedAt = lastMessage.createdAt ? new Date(lastMessage.createdAt) : new Date();
+      updateFields = {
+        lastMessage: {
+          text: lastMessage.text,
+          senderId: lastMessage.senderId,
+          createdAt: updatedAt,
+        },
+        updatedAt,
+      };
+    }
+
     const doc = await ChatModel.findByIdAndUpdate(
       chatId,
-      {
-        $set: {
-          lastMessage: {
-            text: lastMessage.text,
-            senderId: lastMessage.senderId,
-            createdAt: updatedAt,
-          },
-          updatedAt,
-        },
-      },
+      { $set: updateFields },
       options
     ).exec();
 
     return this._toDomain(doc);
+  }
+
+  /**
+   * Deletes a chat document by its unique identifier.
+   * @param {string} chatId
+   * @param {import('mongoose').ClientSession|null} [session=null]
+   * @returns {Promise<boolean>}
+   */
+  async deleteById(chatId, session = null) {
+    if (!chatId || !mongoose.Types.ObjectId.isValid(chatId)) {
+      return false;
+    }
+
+    const activeSession = this._resolveSession(session);
+    const options = activeSession ? { session: activeSession } : {};
+    const res = await ChatModel.deleteOne({ _id: chatId }, options).exec();
+    return res.deletedCount > 0;
   }
 }
 

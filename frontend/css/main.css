@@ -141,6 +141,17 @@ input:focus-visible {
   color: var(--text-primary);
 }
 
+.btn-danger {
+  background-color: rgba(229, 107, 111, 0.16);
+  color: var(--danger);
+  border: 1px solid rgba(229, 107, 111, 0.35);
+}
+
+.btn-danger:hover:not(:disabled) {
+  background-color: var(--danger);
+  color: #ffffff;
+}
+
 .btn-sm {
   padding: 0.35rem 0.65rem;
   font-size: 0.82rem;
@@ -519,6 +530,13 @@ input:focus-visible {
   min-width: 0;
 }
 
+.chat-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-shrink: 0;
+}
+
 .chat-header-text {
   min-width: 0;
 }
@@ -570,6 +588,7 @@ input:focus-visible {
 }
 
 .message-bubble {
+  position: relative;
   max-width: min(68%, 540px);
   padding: 0.55rem 0.8rem 0.45rem;
   border-radius: 12px;
@@ -587,6 +606,17 @@ input:focus-visible {
   border-bottom-left-radius: 4px;
 }
 
+.message-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.message-row.own .message-top {
+  justify-content: flex-end;
+}
+
 .message-sender {
   font-size: 0.78rem;
   font-weight: 600;
@@ -598,21 +628,58 @@ input:focus-visible {
   display: none;
 }
 
+.message-delete-btn {
+  border: none;
+  background: transparent;
+  color: #c8ddf2;
+  cursor: pointer;
+  padding: 0 0.2rem;
+  line-height: 1;
+  font-size: 0.95rem;
+  border-radius: 4px;
+  opacity: 0.7;
+  transition: opacity 0.12s ease, background-color 0.12s ease, color 0.12s ease;
+}
+
+.message-delete-btn:hover,
+.message-delete-btn:focus-visible {
+  opacity: 1;
+  color: #ffffff;
+  background-color: rgba(0, 0, 0, 0.2);
+}
+
 .message-text {
   white-space: pre-wrap;
   font-size: 0.94rem;
 }
 
-.message-time {
-  display: block;
+.message-meta {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.3rem;
   margin-top: 0.2rem;
+}
+
+.message-time {
   font-size: 0.7rem;
   color: var(--text-secondary);
-  text-align: right;
 }
 
 .message-row.own .message-time {
   color: #a9c6e2;
+}
+
+.message-status {
+  font-size: 0.72rem;
+  font-weight: 700;
+  line-height: 1;
+  color: rgba(215, 230, 245, 0.65);
+  user-select: none;
+}
+
+.message-status.seen {
+  color: #79d4ff;
 }
 
 .message-form {

@@ -49,6 +49,26 @@ class ChatController {
     });
     res.status(200).json({ success: true, data: messages });
   }
+
+  /**
+   * DELETE /api/chats/:chatId
+   */
+  async deleteGroupChat(req, res) {
+    const result = await this.chatService.deleteGroupChat(req.user.id, req.params.chatId);
+    res.status(200).json({ success: true, data: result });
+  }
+
+  /**
+   * DELETE /api/chats/:chatId/messages/:messageId
+   */
+  async deleteMessage(req, res) {
+    const result = await this.messageService.deleteMessage({
+      userId: req.user.id,
+      chatId: req.params.chatId,
+      messageId: req.params.messageId,
+    });
+    res.status(200).json({ success: true, data: result });
+  }
 }
 
 module.exports = ChatController;

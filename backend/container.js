@@ -76,6 +76,8 @@ function createContainer(configOverrides = {}) {
   const chatService = new ChatService({
     chatRepository,
     userRepository,
+    messageRepository,
+    unitOfWork,
     realtimeNotifier,
     chatDtoMapper,
     logger,

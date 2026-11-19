@@ -52,10 +52,19 @@ class IChatRepository {
   /**
    * Updates the embedded lastMessage snapshot and updatedAt timestamp on a chat.
    * @param {string} chatId
-   * @param {object} messageData
+   * @param {object|null} messageData
    * @returns {Promise<import('../models/Chat')|null>}
    */
   async updateLastMessage(chatId, messageData) {
+    throw new Error('Not implemented');
+  }
+
+  /**
+   * Deletes a chat record by its unique identifier.
+   * @param {string} chatId
+   * @returns {Promise<boolean>}
+   */
+  async deleteById(chatId) {
     throw new Error('Not implemented');
   }
 }

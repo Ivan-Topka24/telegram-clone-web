@@ -1,11 +1,16 @@
 const User = require('../../../backend/domain/models/User');
 const Chat = require('../../../backend/domain/models/Chat');
 const ChatService = require('../../../backend/application/services/ChatService');
-const { ValidationException } = require('../../../backend/domain/exceptions');
+const {
+  ForbiddenException,
+  ValidationException,
+} = require('../../../backend/domain/exceptions');
 
 describe('Application Layer — ChatService', () => {
   let chatRepository;
   let userRepository;
+  let messageRepository;
+  let unitOfWork;
   let realtimeNotifier;
   let chatService;
 
@@ -15,19 +20,33 @@ describe('Application Layer — ChatService', () => {
 
   beforeEach(() => {
     chatRepository = {
+      findById: jest.fn(),
       findDirectChat: jest.fn(),
       findOrCreateDirectChat: jest.fn(),
       create: jest.fn(),
       findUserChats: jest.fn(),
+      deleteById: jest.fn(),
     };
     userRepository = {
       findById: jest.fn(),
       findByIds: jest.fn(),
     };
+    messageRepository = {
+      deleteByChatId: jest.fn(),
+    };
+    unitOfWork = {
+      execute: jest.fn(async (cb) => cb()),
+    };
     realtimeNotifier = {
       notifyUsers: jest.fn(),
     };
-    chatService = new ChatService({ chatRepository, userRepository, realtimeNotifier });
+    chatService = new ChatService({
+      chatRepository,
+      userRepository,
+      messageRepository,
+      unitOfWork,
+      realtimeNotifier,
+    });
   });
 
   test('getOrCreateDirectChat() prevents self-chat with ValidationException', async () => {
@@ -113,5 +132,39 @@ describe('Application Layer — ChatService', () => {
       'chat:created',
       expect.objectContaining({ id: 'g1', type: 'group' })
     );
+  });
+
+  test('deleteGroupChat() allows only group owner, deletes messages + chat, and broadcasts chat:deleted', async () => {
+    const groupChat = new Chat({
+      id: 'g1',
+      type: 'group',
+      title: 'Engineering',
+      members: [
+        { userId: 'u1', role: 'owner' },
+        { userId: 'u2', role: 'member' },
+      ],
+    });
+    const directChat = new Chat({
+      id: 'd1',
+      type: 'direct',
+      members: [{ userId: 'u1', role: 'member' }, { userId: 'u2', role: 'member' }],
+    });
+
+    chatRepository.findById.mockResolvedValue(directChat);
+    await expect(chatService.deleteGroupChat('u1', 'd1')).rejects.toThrow(ValidationException);
+
+    chatRepository.findById.mockResolvedValue(groupChat);
+    await expect(chatService.deleteGroupChat('u2', 'g1')).rejects.toThrow(ForbiddenException);
+
+    const res = await chatService.deleteGroupChat('u1', 'g1');
+    expect(unitOfWork.execute).toHaveBeenCalledTimes(1);
+    expect(messageRepository.deleteByChatId).toHaveBeenCalledWith('g1');
+    expect(chatRepository.deleteById).toHaveBeenCalledWith('g1');
+    expect(realtimeNotifier.notifyUsers).toHaveBeenCalledWith(
+      ['u1', 'u2'],
+      'chat:deleted',
+      { chatId: 'g1' }
+    );
+    expect(res).toEqual({ chatId: 'g1' });
   });
 });

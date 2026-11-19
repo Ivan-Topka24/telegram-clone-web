@@ -82,6 +82,19 @@ class Chat {
   isGroup() {
     return this.type === 'group';
   }
+
+  /**
+   * Checks whether the specified user is the owner of this chat.
+   * @param {string} userId
+   * @returns {boolean}
+   */
+  isOwner(userId) {
+    if (!userId) {
+      return false;
+    }
+    const targetId = String(userId);
+    return this.members.some((member) => member.userId === targetId && member.role === 'owner');
+  }
 }
 
 module.exports = Chat;

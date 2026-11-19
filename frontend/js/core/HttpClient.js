@@ -136,4 +136,13 @@ export class HttpClient {
   post(endpoint, body) {
     return this.request(endpoint, { method: 'POST', body });
   }
+
+  /**
+   * Sends a DELETE request.
+   * @param {string} endpoint
+   * @returns {Promise<any>}
+   */
+  delete(endpoint) {
+    return this.request(endpoint, { method: 'DELETE' });
+  }
 }

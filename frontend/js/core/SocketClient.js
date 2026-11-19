@@ -155,8 +155,14 @@ export class SocketClient {
 
     if (event === 'message:new') {
       this._onNewMessage(payload);
+    } else if (event === 'message:deleted') {
+      this._onMessageDeleted(payload);
+    } else if (event === 'message:read') {
+      this._onMessageRead(payload);
     } else if (event === 'chat:created') {
       this._onChatCreated(payload);
+    } else if (event === 'chat:deleted') {
+      this._onChatDeleted(payload);
     } else if (event === 'chat:typing') {
       this._onChatTyping(payload);
     } else if (event === 'error') {
@@ -244,6 +250,117 @@ export class SocketClient {
     }
 
     this.store.setState('chats', [chat, ...chats]);
+  }
+
+  /**
+   * Removes a deleted message from active chat messages and updates the chat's lastMessage preview.
+   * @param {{ chatId?: string, messageId?: string, lastMessage?: object|null }} rawPayload
+   */
+  _onMessageDeleted(rawPayload) {
+    if (!rawPayload || !rawPayload.chatId || !rawPayload.messageId) {
+      return;
+    }
+
+    const { chatId, messageId, lastMessage = null } = rawPayload;
+
+    if (chatId === this.store.state.activeChatId) {
+      const nextMessages = this.store.state.messages.filter((m) => m.id !== messageId);
+      if (nextMessages.length !== this.store.state.messages.length) {
+        this.store.setState('messages', nextMessages);
+      }
+    }
+
+    const chats = [...this.store.state.chats];
+    const index = chats.findIndex((c) => c.id === chatId);
+    if (index !== -1) {
+      const existingChat = chats[index];
+      const updatedChat =
+        typeof existingChat.withLastMessage === 'function'
+          ? existingChat.withLastMessage(lastMessage)
+          : { ...existingChat, lastMessage };
+      chats[index] = updatedChat;
+      this.store.setState('chats', chats);
+    }
+  }
+
+  /**
+   * Updates readBy state on active chat messages when a participant views them.
+   * @param {{ chatId?: string, readerId?: string, messageIds?: string[] }} rawPayload
+   */
+  _onMessageRead(rawPayload) {
+    if (
+      !rawPayload ||
+      !rawPayload.chatId ||
+      !rawPayload.readerId ||
+      !Array.isArray(rawPayload.messageIds) ||
+      rawPayload.messageIds.length === 0
+    ) {
+      return;
+    }
+
+    if (rawPayload.chatId !== this.store.state.activeChatId) {
+      return;
+    }
+
+    const idSet = new Set(rawPayload.messageIds.map(String));
+    const readerId = String(rawPayload.readerId);
+    let changed = false;
+
+    const updatedMessages = this.store.state.messages.map((msg) => {
+      if (!idSet.has(msg.id)) {
+        return msg;
+      }
+      if (typeof msg.withReader === 'function') {
+        const nextMsg = msg.withReader(readerId);
+        if (nextMsg !== msg) {
+          changed = true;
+        }
+        return nextMsg;
+      }
+      const currentReadBy = Array.isArray(msg.readBy) ? msg.readBy : [];
+      if (currentReadBy.includes(readerId)) {
+        return msg;
+      }
+      changed = true;
+      return { ...msg, readBy: [...currentReadBy, readerId] };
+    });
+
+    if (changed) {
+      this.store.setState('messages', updatedMessages);
+    }
+  }
+
+  /**
+   * Removes a deleted chat from the sidebar and closes it if currently active.
+   * @param {{ chatId?: string }} rawPayload
+   */
+  _onChatDeleted(rawPayload) {
+    if (!rawPayload || !rawPayload.chatId) {
+      return;
+    }
+
+    const { chatId } = rawPayload;
+    const nextChats = this.store.state.chats.filter((c) => c.id !== chatId);
+    if (nextChats.length !== this.store.state.chats.length) {
+      this.store.setState('chats', nextChats);
+    }
+
+    if (this.store.state.activeChatId === chatId) {
+      this.store.setState('activeChatId', null);
+    }
+
+    for (const key of [...this._typingTimers.keys()]) {
+      if (key.startsWith(`${chatId}:`)) {
+        clearTimeout(this._typingTimers.get(key));
+        this._typingTimers.delete(key);
+      }
+    }
+
+    if (this.store.state.typingUsers[chatId]) {
+      const nextTyping = { ...this.store.state.typingUsers };
+      delete nextTyping[chatId];
+      this.store.setState('typingUsers', nextTyping);
+    }
   }
 
   /**

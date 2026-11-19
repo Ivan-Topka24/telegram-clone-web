@@ -109,4 +109,83 @@ describe('Integration — /api/chats', () => {
       .set('Authorization', `Bearer ${alice.token}`);
     expect(missingChatRes.status).toBe(404);
   });
+
+  test('deletes own messages (updating lastMessage) and allows only group owner to delete groups', async () => {
+    const alice = await registerUser('alice_del', 'Alice');
+    const bob = await registerUser('bob_del', 'Bob');
+
+    const directRes = await request(app)
+      .post('/api/chats/direct')
+      .set('Authorization', `Bearer ${alice.token}`)
+      .send({ targetUserId: bob.user.id });
+    const directChatId = directRes.body.data.id;
+
+    const m1 = await messageService.sendMessage({
+      senderId: alice.user.id,
+      chatId: directChatId,
+      text: 'First',
+    });
+    const m2 = await messageService.sendMessage({
+      senderId: alice.user.id,
+      chatId: directChatId,
+      text: 'Second',
+    });
+
+    // Bob cannot delete Alice's message
+    const forbiddenMsgDel = await request(app)
+      .delete(`/api/chats/${directChatId}/messages/${m2.id}`)
+      .set('Authorization', `Bearer ${bob.token}`);
+    expect(forbiddenMsgDel.status).toBe(403);
+
+    // Alice deletes latest message -> lastMessage reverts to First
+    const delM2 = await request(app)
+      .delete(`/api/chats/${directChatId}/messages/${m2.id}`)
+      .set('Authorization', `Bearer ${alice.token}`);
+    expect(delM2.status).toBe(200);
+    expect(delM2.body.data.lastMessage.text).toBe('First');
+
+    // Alice deletes remaining message -> lastMessage becomes null
+    const delM1 = await request(app)
+      .delete(`/api/chats/${directChatId}/messages/${m1.id}`)
+      .set('Authorization', `Bearer ${alice.token}`);
+    expect(delM1.status).toBe(200);
+    expect(delM1.body.data.lastMessage).toBeNull();
+
+    // Direct chat cannot be deleted via group delete endpoint
+    const delDirect = await request(app)
+      .delete(`/api/chats/${directChatId}`)
+      .set('Authorization', `Bearer ${alice.token}`);
+    expect(delDirect.status).toBe(400);
+
+    // Create group chat and send a message
+    const groupRes = await request(app)
+      .post('/api/chats/group')
+      .set('Authorization', `Bearer ${alice.token}`)
+      .send({ title: 'Temp Group', memberIds: [bob.user.id] });
+    const groupId = groupRes.body.data.id;
+
+    await messageService.sendMessage({
+      senderId: alice.user.id,
+      chatId: groupId,
+      text: 'Group msg',
+    });
+
+    // Non-owner Bob cannot delete group
+    const bobDeleteGroup = await request(app)
+      .delete(`/api/chats/${groupId}`)
+      .set('Authorization', `Bearer ${bob.token}`);
+    expect(bobDeleteGroup.status).toBe(403);
+
+    // Owner Alice deletes group -> group and messages are gone
+    const aliceDeleteGroup = await request(app)
+      .delete(`/api/chats/${groupId}`)
+      .set('Authorization', `Bearer ${alice.token}`);
+    expect(aliceDeleteGroup.status).toBe(200);
+    expect(aliceDeleteGroup.body.data.chatId).toBe(groupId);
+
+    const historyAfterDelete = await request(app)
+      .get(`/api/chats/${groupId}/messages`)
+      .set('Authorization', `Bearer ${alice.token}`);
+    expect(historyAfterDelete.status).toBe(404);
+  });
 });

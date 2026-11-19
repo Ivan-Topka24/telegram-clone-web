@@ -76,6 +76,22 @@ class WsGatewayController {
         chatId: payload.chatId,
       });
     });
+
+    this.registerHandler('message:delete', async (user, payload) => {
+      await this.messageService.deleteMessage({
+        userId: user.userId,
+        chatId: payload.chatId,
+        messageId: payload.messageId,
+      });
+    });
+
+    this.registerHandler('message:read', async (user, payload) => {
+      await this.messageService.markMessagesAsRead({
+        userId: user.userId,
+        chatId: payload.chatId,
+        upToMessageId: payload.upToMessageId || null,
+      });
+    });
   }
 
   /**

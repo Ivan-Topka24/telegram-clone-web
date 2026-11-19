@@ -92,6 +92,21 @@ export class ChatModel {
   }
 
   /**
+   * Returns true if the given userId is the owner of this group chat.
+   * @param {string|null|undefined} userId
+   * @returns {boolean}
+   */
+  isOwner(userId) {
+    if (!userId || !this.isGroup()) {
+      return false;
+    }
+    const targetId = String(userId);
+    return this.members.some(
+      (member) => String(member.userId) === targetId && member.role === 'owner'
+    );
+  }
+
+  /**
    * @returns {string}
    */
   getResolvedTitle() {
@@ -116,8 +131,8 @@ export class ChatModel {
   }
 
   /**
-   * Returns a new ChatModel snapshot with an updated lastMessage and updatedAt timestamp.
-   * @param {import('./MessageModel.js').MessageModel} message
+   * Returns a new ChatModel snapshot with an updated lastMessage (or null) and updatedAt timestamp.
+   * @param {import('./MessageModel.js').MessageModel|object|null} message
    * @returns {ChatModel}
    */
   withLastMessage(message) {
@@ -128,12 +143,14 @@ export class ChatModel {
       displayTitle: this.displayTitle,
       peer: this.peer,
       members: this.members,
-      lastMessage: {
-        text: message.text,
-        senderId: message.senderId,
-        createdAt: message.createdAt,
-      },
-      updatedAt: message.createdAt || new Date(),
+      lastMessage: message
+        ? {
+            text: message.text,
+            senderId: message.senderId,
+            createdAt: message.createdAt,
+          }
+        : null,
+      updatedAt: message ? message.createdAt || new Date() : this.updatedAt,
     });
   }
 }

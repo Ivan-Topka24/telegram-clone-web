@@ -152,4 +152,104 @@ describe('E2E WebSocket — WsGatewayController', () => {
     wsB.close();
     await Promise.all([closeA, closeB]);
   });
+
+  test('broadcasts message:read receipts, message:deleted, and chat:deleted across connected users', async () => {
+    const regA = await request(testContainer.app).post('/api/auth/register').send({
+      username: 'owner_ws',
+      displayName: 'Owner WS',
+      password: 'password123',
+    });
+    const regB = await request(testContainer.app).post('/api/auth/register').send({
+      username: 'member_ws',
+      displayName: 'Member WS',
+      password: 'password123',
+    });
+
+    const userA = regA.body.data;
+    const userB = regB.body.data;
+
+    const groupRes = await request(testContainer.app)
+      .post('/api/chats/group')
+      .set('Authorization', `Bearer ${userA.token}`)
+      .send({ title: 'WS Group', memberIds: [userB.user.id] });
+    const groupId = groupRes.body.data.id;
+
+    const wsA = new WebSocket(`ws://127.0.0.1:${port}/ws?token=${userA.token}`);
+    const wsB = new WebSocket(`ws://127.0.0.1:${port}/ws?token=${userB.token}`);
+
+    await Promise.all([
+      new Promise((resolve) => wsA.on('open', resolve)),
+      new Promise((resolve) => wsB.on('open', resolve)),
+    ]);
+
+    // 1. UserA sends a message -> readBy starts empty
+    const msgPromiseA = waitForSocketMessage(wsA, (m) => m.event === 'message:new');
+    const msgPromiseB = waitForSocketMessage(wsB, (m) => m.event === 'message:new');
+    wsA.send(
+      JSON.stringify({
+        event: 'message:send',
+        payload: { chatId: groupId, text: 'Check read receipt' },
+      })
+    );
+    const [msgFrameA, msgFrameB] = await Promise.all([msgPromiseA, msgPromiseB]);
+    expect(msgFrameA.payload.readBy).toEqual([]);
+    const messageId = msgFrameB.payload.id;
+
+    // 2. UserB marks message as read -> UserA and UserB receive message:read & DB readBy updates
+    const readPromiseA = waitForSocketMessage(wsA, (m) => m.event === 'message:read');
+    const readPromiseB = waitForSocketMessage(wsB, (m) => m.event === 'message:read');
+    wsB.send(
+      JSON.stringify({
+        event: 'message:read',
+        payload: { chatId: groupId, upToMessageId: messageId },
+      })
+    );
+    const [readFrameA, readFrameB] = await Promise.all([readPromiseA, readPromiseB]);
+    expect(readFrameA.payload).toEqual({
+      chatId: groupId,
+      readerId: userB.user.id,
+      messageIds: [messageId],
+    });
+    expect(readFrameB.payload.messageIds).toEqual([messageId]);
+
+    const dbMsg = await MessageModel.findById(messageId).exec();
+    expect(dbMsg.readBy.map(String)).toEqual([userB.user.id]);
+
+    // 3. UserA deletes the message via WS -> both receive message:deleted
+    const deletedMsgPromiseA = waitForSocketMessage(wsA, (m) => m.event === 'message:deleted');
+    const deletedMsgPromiseB = waitForSocketMessage(wsB, (m) => m.event === 'message:deleted');
+    wsA.send(
+      JSON.stringify({
+        event: 'message:delete',
+        payload: { chatId: groupId, messageId },
+      })
+    );
+    const [delFrameA, delFrameB] = await Promise.all([deletedMsgPromiseA, deletedMsgPromiseB]);
+    expect(delFrameA.payload).toEqual({
+      chatId: groupId,
+      messageId,
+      lastMessage: null,
+    });
+    expect(delFrameB.payload.messageId).toBe(messageId);
+    expect(await MessageModel.findById(messageId).exec()).toBeNull();
+
+    // 4. UserA deletes the group via HTTP -> both receive chat:deleted
+    const deletedChatPromiseA = waitForSocketMessage(wsA, (m) => m.event === 'chat:deleted');
+    const deletedChatPromiseB = waitForSocketMessage(wsB, (m) => m.event === 'chat:deleted');
+    const deleteRes = await request(testContainer.app)
+      .delete(`/api/chats/${groupId}`)
+      .set('Authorization', `Bearer ${userA.token}`);
+    expect(deleteRes.status).toBe(200);
+
+    const [chatDelA, chatDelB] = await Promise.all([deletedChatPromiseA, deletedChatPromiseB]);
+    expect(chatDelA.payload).toEqual({ chatId: groupId });
+    expect(chatDelB.payload).toEqual({ chatId: groupId });
+    expect(await ChatModel.findById(groupId).exec()).toBeNull();
+
+    const closeA = new Promise((r) => wsA.once('close', r));
+    const closeB = new Promise((r) => wsB.once('close', r));
+    wsA.close();
+    wsB.close();
+    await Promise.all([closeA, closeB]);
+  });
 });

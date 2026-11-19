@@ -161,6 +161,17 @@
               </div>
             </div>
           </div>
+          <div class="chat-header-actions">
+            <button
+              id="delete-group-btn"
+              type="button"
+              class="btn btn-danger btn-sm"
+              title="Delete this group chat"
+              hidden
+            >
+              Delete Group
+            </button>
+          </div>
         </header>
 
         <div id="message-list" class="message-list scroller" aria-live="polite"></div>
@@ -272,9 +283,23 @@
   <template id="message-item-template">
     <div class="message-row">
       <article class="message-bubble">
-        <div class="message-sender"></div>
+        <div class="message-top">
+          <div class="message-sender"></div>
+          <button
+            type="button"
+            class="message-delete-btn"
+            title="Delete message"
+            aria-label="Delete message"
+            hidden
+          >
+            &times;
+          </button>
+        </div>
         <div class="message-text"></div>
-        <time class="message-time"></time>
+        <div class="message-meta">
+          <time class="message-time"></time>
+          <span class="message-status" hidden></span>
+        </div>
       </article>
     </div>
   </template>

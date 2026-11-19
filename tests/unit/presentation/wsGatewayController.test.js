@@ -15,7 +15,11 @@ describe('Presentation Layer — WsGatewayController', () => {
       addConnection: jest.fn(),
       removeConnection: jest.fn(),
     };
-    messageService = { sendMessage: jest.fn().mockResolvedValue({}) };
+    messageService = {
+      sendMessage: jest.fn().mockResolvedValue({}),
+      deleteMessage: jest.fn().mockResolvedValue({}),
+      markMessagesAsRead: jest.fn().mockResolvedValue({}),
+    };
     presenceService = { notifyTyping: jest.fn().mockResolvedValue(undefined) };
     logger = { info: jest.fn(), warn: jest.fn(), error: jest.fn() };
 
@@ -71,5 +75,42 @@ describe('Presentation Layer — WsGatewayController', () => {
       Buffer.from(JSON.stringify({ event: 'custom:ping', payload: { ok: true } }))
     );
     expect(customHandler).toHaveBeenCalledWith(user, { ok: true });
+  });
+
+  test('delegates message:delete and message:read to MessageService', async () => {
+    const ws = { readyState: WebSocket.OPEN, send: jest.fn() };
+    const user = { userId: 'u1', username: 'alice' };
+
+    await controller._handleMessage(
+      ws,
+      user,
+      Buffer.from(
+        JSON.stringify({
+          event: 'message:delete',
+          payload: { chatId: 'c1', messageId: 'm1' },
+        })
+      )
+    );
+    expect(messageService.deleteMessage).toHaveBeenCalledWith({
+      userId: 'u1',
+      chatId: 'c1',
+      messageId: 'm1',
+    });
+
+    await controller._handleMessage(
+      ws,
+      user,
+      Buffer.from(
+        JSON.stringify({
+          event: 'message:read',
+          payload: { chatId: 'c1', upToMessageId: 'm2' },
+        })
+      )
+    );
+    expect(messageService.markMessagesAsRead).toHaveBeenCalledWith({
+      userId: 'u1',
+      chatId: 'c1',
+      upToMessageId: 'm2',
+    });
   });
 });

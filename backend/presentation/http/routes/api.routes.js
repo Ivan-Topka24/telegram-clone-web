@@ -62,6 +62,16 @@ function createApiRouter({
     authMiddleware,
     asyncHandler((req, res) => chatController.getMessages(req, res))
   );
+  router.delete(
+    '/chats/:chatId',
+    authMiddleware,
+    asyncHandler((req, res) => chatController.deleteGroupChat(req, res))
+  );
+  router.delete(
+    '/chats/:chatId/messages/:messageId',
+    authMiddleware,
+    asyncHandler((req, res) => chatController.deleteMessage(req, res))
+  );
 
   // Return structured 404 JSON for unknown /api/* endpoints
   router.use((_req, _res, next) => {

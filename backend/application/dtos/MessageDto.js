@@ -9,14 +9,16 @@ class MessageDto {
    * @param {string} params.senderId
    * @param {string} params.senderName
    * @param {string} params.text
+   * @param {string[]} [params.readBy=[]]
    * @param {Date|string|null} [params.createdAt=null]
    */
-  constructor({ id, chatId, senderId, senderName, text, createdAt = null }) {
+  constructor({ id, chatId, senderId, senderName, text, readBy = [], createdAt = null }) {
     this.id = id ?? null;
     this.chatId = chatId;
     this.senderId = senderId;
     this.senderName = senderName;
     this.text = text;
+    this.readBy = Array.isArray(readBy) ? readBy.map(String) : [];
     this.createdAt = createdAt ?? null;
   }
 }
